@@ -226,6 +226,77 @@ impl Generator {
         self.drawable(ShapeType::Curve, sets, resolved)
     }
 
+    #[cfg(feature = "svg_path")]
+    pub fn path(&self, d: &str, options: Option<Options>) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        let mut sets = Vec::new();
+        if d.is_empty() {
+            return self.drawable(ShapeType::Path, sets, resolved);
+        }
+
+        let path = normalize_path_input(d);
+        let mut rng = RngHelper::new(resolved.seed);
+        let shape = renderer::svg_path_with_rng(&path, &resolved, &mut rng);
+        let simplified = resolved
+            .simplification
+            .is_some_and(|simplification| simplification < 1.0);
+        let distance = if simplified {
+            4.0 - 4.0 * resolved.simplification.unwrap_or(1.0)
+        } else {
+            (1.0 + resolved.roughness) / 2.0
+        };
+        let path_sets = renderer::points_on_path(&path, 1.0, Some(distance));
+        if shape.ops.is_empty() && path_sets.is_empty() {
+            return self.drawable(ShapeType::Path, sets, resolved);
+        }
+        let has_fill = resolved
+            .fill
+            .as_deref()
+            .is_some_and(|fill| fill != "transparent" && fill != "none");
+        let has_stroke = resolved.stroke != "none";
+
+        if has_fill {
+            if resolved.fill_style == crate::core::FillStyle::Solid {
+                if path_sets.len() == 1 {
+                    let mut fill_options = resolved.clone();
+                    fill_options.disable_multi_stroke = true;
+                    fill_options.roughness = if resolved.roughness != 0.0 {
+                        resolved.roughness + resolved.fill_shape_roughness_gain
+                    } else {
+                        0.0
+                    };
+                    let fill_shape = renderer::svg_path_with_rng(&path, &fill_options, &mut rng);
+                    sets.push(crate::core::OpSet::new(
+                        crate::core::OpSetType::FillPath,
+                        merged_shape(fill_shape.ops),
+                    ));
+                } else {
+                    sets.push(renderer::solid_fill_polygon(
+                        &path_sets, &resolved, &mut rng,
+                    ));
+                }
+            } else {
+                sets.push(renderer::pattern_fill_polygons(
+                    &path_sets, &resolved, &mut rng,
+                ));
+            }
+        }
+
+        if has_stroke {
+            if simplified {
+                for set in path_sets {
+                    sets.push(renderer::linear_path_with_rng(
+                        &set, false, &resolved, &mut rng,
+                    ));
+                }
+            } else {
+                sets.push(shape);
+            }
+        }
+
+        self.drawable(ShapeType::Path, sets, resolved)
+    }
+
     fn drawable(&self, shape: ShapeType, sets: Vec<OpSet>, options: ResolvedOptions) -> Drawable {
         Drawable {
             shape,
@@ -233,6 +304,26 @@ impl Generator {
             sets,
         }
     }
+}
+
+#[cfg(feature = "svg_path")]
+fn normalize_path_input(d: &str) -> String {
+    d.replace('\n', " ").replace("- ", "-").replace("  ", " ")
+}
+
+#[cfg(feature = "svg_path")]
+fn merged_shape(input: Vec<crate::core::Op>) -> Vec<crate::core::Op> {
+    input
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, op)| {
+            if index == 0 || op.op != crate::core::OpType::Move {
+                Some(op)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn curve_fill_points(points: &[Point], options: &ResolvedOptions) -> Vec<Point> {

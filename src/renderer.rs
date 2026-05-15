@@ -236,6 +236,109 @@ pub fn curve_with_rng(points: &[Point], options: &ResolvedOptions, rng: &mut Rng
     OpSet::new(OpSetType::Path, ops)
 }
 
+#[cfg(feature = "svg_path")]
+pub fn svg_path(path: &str, options: &ResolvedOptions) -> OpSet {
+    let mut rng = RngHelper::new(options.seed);
+    svg_path_with_rng(path, options, &mut rng)
+}
+
+#[cfg(feature = "svg_path")]
+pub fn svg_path_with_rng(path: &str, options: &ResolvedOptions, rng: &mut RngHelper) -> OpSet {
+    let Ok(segments) = normalized_svg_segments(path) else {
+        return empty_path(options);
+    };
+    let mut ops = Vec::new();
+    let mut first = [0.0, 0.0];
+    let mut current = [0.0, 0.0];
+    for segment in segments {
+        match segment {
+            NormalizedSvgSegment::Move(point) => {
+                current = point;
+                first = point;
+            }
+            NormalizedSvgSegment::Line(point) => {
+                ops.extend(double_line_ops(
+                    current[0], current[1], point[0], point[1], options, rng, false,
+                ));
+                current = point;
+            }
+            NormalizedSvgSegment::Cubic([x1, y1, x2, y2, x, y]) => {
+                ops.extend(bezier_to_ops(x1, y1, x2, y2, x, y, current, options, rng));
+                current = [x, y];
+            }
+            NormalizedSvgSegment::Close => {
+                ops.extend(double_line_ops(
+                    current[0], current[1], first[0], first[1], options, rng, false,
+                ));
+                current = first;
+            }
+        }
+    }
+    OpSet::new(OpSetType::Path, ops)
+}
+
+#[cfg(feature = "svg_path")]
+pub fn points_on_path(path: &str, tolerance: f64, distance: Option<f64>) -> Vec<Vec<Point>> {
+    let Ok(segments) = normalized_svg_segments(path) else {
+        return Vec::new();
+    };
+    let mut sets = Vec::new();
+    let mut current_points = Vec::new();
+    let mut start = [0.0, 0.0];
+    let mut pending_curve = Vec::new();
+
+    for segment in segments {
+        match segment {
+            NormalizedSvgSegment::Move(point) => {
+                append_pending_path_points(
+                    &mut sets,
+                    &mut current_points,
+                    &mut pending_curve,
+                    tolerance,
+                );
+                start = point;
+                current_points.push(point);
+            }
+            NormalizedSvgSegment::Line(point) => {
+                append_pending_curve_points(&mut current_points, &mut pending_curve, tolerance);
+                current_points.push(point);
+            }
+            NormalizedSvgSegment::Cubic([x1, y1, x2, y2, x, y]) => {
+                if pending_curve.is_empty() {
+                    let last_point = current_points.last().copied().unwrap_or(start);
+                    pending_curve.push(last_point);
+                }
+                pending_curve.push([x1, y1]);
+                pending_curve.push([x2, y2]);
+                pending_curve.push([x, y]);
+            }
+            NormalizedSvgSegment::Close => {
+                append_pending_curve_points(&mut current_points, &mut pending_curve, tolerance);
+                current_points.push(start);
+            }
+        }
+    }
+    append_pending_path_points(
+        &mut sets,
+        &mut current_points,
+        &mut pending_curve,
+        tolerance,
+    );
+
+    if let Some(distance) = distance {
+        if distance != 0.0 {
+            return sets
+                .into_iter()
+                .filter_map(|set| {
+                    let simplified = simplify(&set, distance);
+                    (!simplified.is_empty()).then_some(simplified)
+                })
+                .collect();
+        }
+    }
+    sets
+}
+
 pub fn generate_ellipse_params(
     width: f64,
     height: f64,
@@ -900,6 +1003,415 @@ fn curve_with_offset(
         }
     }
     curve_ops(&ps, None, options, rng)
+}
+
+#[cfg(feature = "svg_path")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum NormalizedSvgSegment {
+    Move(Point),
+    Line(Point),
+    Cubic([f64; 6]),
+    Close,
+}
+
+#[cfg(feature = "svg_path")]
+fn normalized_svg_segments(path: &str) -> Result<Vec<NormalizedSvgSegment>, svgtypes::Error> {
+    use svgtypes::{PathParser, PathSegment};
+
+    let mut out = Vec::new();
+    let mut current = [0.0, 0.0];
+    let mut subpath = [0.0, 0.0];
+    let mut last_type = '\0';
+    let mut last_cubic_control = [0.0, 0.0];
+    let mut last_quadratic_control = [0.0, 0.0];
+
+    for segment in PathParser::from(path) {
+        match segment? {
+            PathSegment::MoveTo { abs, x, y } => {
+                current = absolute_point(current, [x, y], abs);
+                subpath = current;
+                out.push(NormalizedSvgSegment::Move(current));
+                last_type = 'M';
+            }
+            PathSegment::LineTo { abs, x, y } => {
+                current = absolute_point(current, [x, y], abs);
+                out.push(NormalizedSvgSegment::Line(current));
+                last_type = 'L';
+            }
+            PathSegment::HorizontalLineTo { abs, x } => {
+                current[0] = if abs { x } else { current[0] + x };
+                out.push(NormalizedSvgSegment::Line(current));
+                last_type = 'H';
+            }
+            PathSegment::VerticalLineTo { abs, y } => {
+                current[1] = if abs { y } else { current[1] + y };
+                out.push(NormalizedSvgSegment::Line(current));
+                last_type = 'V';
+            }
+            PathSegment::CurveTo {
+                abs,
+                x1,
+                y1,
+                x2,
+                y2,
+                x,
+                y,
+            } => {
+                let c1 = absolute_point(current, [x1, y1], abs);
+                let c2 = absolute_point(current, [x2, y2], abs);
+                current = absolute_point(current, [x, y], abs);
+                out.push(NormalizedSvgSegment::Cubic([
+                    c1[0], c1[1], c2[0], c2[1], current[0], current[1],
+                ]));
+                last_cubic_control = c2;
+                last_type = 'C';
+            }
+            PathSegment::SmoothCurveTo { abs, x2, y2, x, y } => {
+                let c1 = if matches!(last_type, 'C' | 'S') {
+                    [
+                        current[0] + (current[0] - last_cubic_control[0]),
+                        current[1] + (current[1] - last_cubic_control[1]),
+                    ]
+                } else {
+                    current
+                };
+                let c2 = absolute_point(current, [x2, y2], abs);
+                current = absolute_point(current, [x, y], abs);
+                out.push(NormalizedSvgSegment::Cubic([
+                    c1[0], c1[1], c2[0], c2[1], current[0], current[1],
+                ]));
+                last_cubic_control = c2;
+                last_type = 'S';
+            }
+            PathSegment::Quadratic { abs, x1, y1, x, y } => {
+                let q = absolute_point(current, [x1, y1], abs);
+                let end = absolute_point(current, [x, y], abs);
+                push_quadratic_as_cubic(&mut out, current, q, end);
+                current = end;
+                last_quadratic_control = q;
+                last_type = 'Q';
+            }
+            PathSegment::SmoothQuadratic { abs, x, y } => {
+                let q = if matches!(last_type, 'Q' | 'T') {
+                    [
+                        current[0] + (current[0] - last_quadratic_control[0]),
+                        current[1] + (current[1] - last_quadratic_control[1]),
+                    ]
+                } else {
+                    current
+                };
+                let end = absolute_point(current, [x, y], abs);
+                push_quadratic_as_cubic(&mut out, current, q, end);
+                current = end;
+                last_quadratic_control = q;
+                last_type = 'T';
+            }
+            PathSegment::EllipticalArc {
+                abs,
+                rx,
+                ry,
+                x_axis_rotation,
+                large_arc,
+                sweep,
+                x,
+                y,
+            } => {
+                let end = absolute_point(current, [x, y], abs);
+                let rx = rx.abs();
+                let ry = ry.abs();
+                if rx == 0.0 || ry == 0.0 {
+                    out.push(NormalizedSvgSegment::Cubic([
+                        current[0], current[1], end[0], end[1], end[0], end[1],
+                    ]));
+                } else if current != end {
+                    for curve in
+                        arc_to_cubic_curves(current, end, rx, ry, x_axis_rotation, large_arc, sweep)
+                    {
+                        out.push(NormalizedSvgSegment::Cubic(curve));
+                    }
+                }
+                current = end;
+                last_type = 'A';
+            }
+            PathSegment::ClosePath { .. } => {
+                out.push(NormalizedSvgSegment::Close);
+                current = subpath;
+                last_type = 'Z';
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+#[cfg(feature = "svg_path")]
+fn absolute_point(current: Point, point: Point, abs: bool) -> Point {
+    if abs {
+        point
+    } else {
+        [current[0] + point[0], current[1] + point[1]]
+    }
+}
+
+#[cfg(feature = "svg_path")]
+fn push_quadratic_as_cubic(
+    out: &mut Vec<NormalizedSvgSegment>,
+    current: Point,
+    control: Point,
+    end: Point,
+) {
+    let c1 = [
+        current[0] + 2.0 * (control[0] - current[0]) / 3.0,
+        current[1] + 2.0 * (control[1] - current[1]) / 3.0,
+    ];
+    let c2 = [
+        end[0] + 2.0 * (control[0] - end[0]) / 3.0,
+        end[1] + 2.0 * (control[1] - end[1]) / 3.0,
+    ];
+    out.push(NormalizedSvgSegment::Cubic([
+        c1[0], c1[1], c2[0], c2[1], end[0], end[1],
+    ]));
+}
+
+#[cfg(feature = "svg_path")]
+fn append_pending_curve_points(
+    current_points: &mut Vec<Point>,
+    pending_curve: &mut Vec<Point>,
+    tolerance: f64,
+) {
+    if pending_curve.len() >= 4 {
+        current_points.extend(points_on_bezier_curves(pending_curve, tolerance, None));
+    }
+    pending_curve.clear();
+}
+
+#[cfg(feature = "svg_path")]
+fn append_pending_path_points(
+    sets: &mut Vec<Vec<Point>>,
+    current_points: &mut Vec<Point>,
+    pending_curve: &mut Vec<Point>,
+    tolerance: f64,
+) {
+    append_pending_curve_points(current_points, pending_curve, tolerance);
+    if !current_points.is_empty() {
+        sets.push(std::mem::take(current_points));
+    }
+}
+
+#[cfg(feature = "svg_path")]
+#[allow(clippy::too_many_arguments)]
+fn bezier_to_ops(
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    x: f64,
+    y: f64,
+    current: Point,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> Vec<Op> {
+    let random_offsets = [
+        if options.max_randomness_offset != 0.0 {
+            options.max_randomness_offset
+        } else {
+            1.0
+        },
+        if options.max_randomness_offset != 0.0 {
+            options.max_randomness_offset
+        } else {
+            1.0
+        } + 0.3,
+    ];
+    let iterations = if options.disable_multi_stroke { 1 } else { 2 };
+    let preserve_vertices = options.preserve_vertices;
+    let mut ops = Vec::new();
+    for (i, offset) in random_offsets.iter().enumerate().take(iterations) {
+        if i == 0 {
+            ops.push(Op::new(OpType::Move, vec![current[0], current[1]]));
+        } else {
+            ops.push(Op::new(
+                OpType::Move,
+                vec![
+                    current[0]
+                        + if preserve_vertices {
+                            0.0
+                        } else {
+                            rng.offset_symmetric(random_offsets[0], options.roughness, 1.0)
+                        },
+                    current[1]
+                        + if preserve_vertices {
+                            0.0
+                        } else {
+                            rng.offset_symmetric(random_offsets[0], options.roughness, 1.0)
+                        },
+                ],
+            ));
+        }
+        let end = if preserve_vertices {
+            [x, y]
+        } else {
+            [
+                x + rng.offset_symmetric(*offset, options.roughness, 1.0),
+                y + rng.offset_symmetric(*offset, options.roughness, 1.0),
+            ]
+        };
+        ops.push(Op::new(
+            OpType::BCurveTo,
+            vec![
+                x1 + rng.offset_symmetric(*offset, options.roughness, 1.0),
+                y1 + rng.offset_symmetric(*offset, options.roughness, 1.0),
+                x2 + rng.offset_symmetric(*offset, options.roughness, 1.0),
+                y2 + rng.offset_symmetric(*offset, options.roughness, 1.0),
+                end[0],
+                end[1],
+            ],
+        ));
+    }
+    ops
+}
+
+#[cfg(feature = "svg_path")]
+#[allow(clippy::too_many_arguments)]
+fn arc_to_cubic_curves(
+    start: Point,
+    end: Point,
+    mut rx: f64,
+    mut ry: f64,
+    angle: f64,
+    large_arc_flag: bool,
+    sweep_flag: bool,
+) -> Vec<[f64; 6]> {
+    let angle_rad = angle.to_radians();
+    let (x1, y1) = rotate(start[0], start[1], -angle_rad);
+    let (x2, y2) = rotate(end[0], end[1], -angle_rad);
+    let x = (x1 - x2) / 2.0;
+    let y = (y1 - y2) / 2.0;
+    let mut h = (x * x) / (rx * rx) + (y * y) / (ry * ry);
+    if h > 1.0 {
+        h = h.sqrt();
+        rx *= h;
+        ry *= h;
+    }
+    let sign = if large_arc_flag == sweep_flag {
+        -1.0
+    } else {
+        1.0
+    };
+    let rx_pow = rx * rx;
+    let ry_pow = ry * ry;
+    let left = rx_pow * ry_pow - rx_pow * y * y - ry_pow * x * x;
+    let right = rx_pow * y * y + ry_pow * x * x;
+    let k = sign * (left / right).abs().sqrt();
+    let cx = k * rx * y / ry + (x1 + x2) / 2.0;
+    let cy = k * -ry * x / rx + (y1 + y2) / 2.0;
+    let mut f1 = js_round_to_digits((y1 - cy) / ry, 9).asin();
+    let mut f2 = js_round_to_digits((y2 - cy) / ry, 9).asin();
+    if x1 < cx {
+        f1 = std::f64::consts::PI - f1;
+    }
+    if x2 < cx {
+        f2 = std::f64::consts::PI - f2;
+    }
+    if f1 < 0.0 {
+        f1 += std::f64::consts::PI * 2.0;
+    }
+    if f2 < 0.0 {
+        f2 += std::f64::consts::PI * 2.0;
+    }
+    if sweep_flag && f1 > f2 {
+        f1 -= std::f64::consts::PI * 2.0;
+    }
+    if !sweep_flag && f2 > f1 {
+        f2 -= std::f64::consts::PI * 2.0;
+    }
+
+    let mut curves = Vec::new();
+    arc_to_cubic_curves_recursive(
+        &mut curves,
+        [x1, y1],
+        [x2, y2],
+        rx,
+        ry,
+        sweep_flag,
+        f1,
+        f2,
+        cx,
+        cy,
+    );
+    for curve in &mut curves {
+        let c1 = rotate(curve[0], curve[1], angle_rad);
+        let c2 = rotate(curve[2], curve[3], angle_rad);
+        let e = rotate(curve[4], curve[5], angle_rad);
+        *curve = [c1.0, c1.1, c2.0, c2.1, e.0, e.1];
+    }
+    curves
+}
+
+#[cfg(feature = "svg_path")]
+#[allow(clippy::too_many_arguments)]
+fn arc_to_cubic_curves_recursive(
+    out: &mut Vec<[f64; 6]>,
+    start: Point,
+    mut end: Point,
+    rx: f64,
+    ry: f64,
+    sweep_flag: bool,
+    f1: f64,
+    f2: f64,
+    cx: f64,
+    cy: f64,
+) {
+    let mut segment_f2 = f2;
+    let mut tail = None;
+    let max = std::f64::consts::PI * 120.0 / 180.0;
+    if (segment_f2 - f1).abs() > max {
+        let f2_old = segment_f2;
+        let end_old = end;
+        segment_f2 = if sweep_flag && segment_f2 > f1 {
+            f1 + max
+        } else {
+            f1 - max
+        };
+        end = [cx + rx * segment_f2.cos(), cy + ry * segment_f2.sin()];
+        tail = Some((end, end_old, segment_f2, f2_old));
+    }
+
+    let df = segment_f2 - f1;
+    let c1 = f1.cos();
+    let s1 = f1.sin();
+    let c2 = segment_f2.cos();
+    let s2 = segment_f2.sin();
+    let t = (df / 4.0).tan();
+    let hx = 4.0 / 3.0 * rx * t;
+    let hy = 4.0 / 3.0 * ry * t;
+    let m1 = start;
+    let mut m2 = [start[0] + hx * s1, start[1] - hy * c1];
+    let m3 = [end[0] + hx * s2, end[1] - hy * c2];
+    let m4 = end;
+    m2[0] = 2.0 * m1[0] - m2[0];
+    m2[1] = 2.0 * m1[1] - m2[1];
+    out.push([m2[0], m2[1], m3[0], m3[1], m4[0], m4[1]]);
+
+    if let Some((tail_start, tail_end, tail_f1, tail_f2)) = tail {
+        arc_to_cubic_curves_recursive(
+            out, tail_start, tail_end, rx, ry, sweep_flag, tail_f1, tail_f2, cx, cy,
+        );
+    }
+}
+
+#[cfg(feature = "svg_path")]
+fn rotate(x: f64, y: f64, angle_rad: f64) -> (f64, f64) {
+    (
+        x * angle_rad.cos() - y * angle_rad.sin(),
+        x * angle_rad.sin() + y * angle_rad.cos(),
+    )
+}
+
+#[cfg(feature = "svg_path")]
+fn js_round_to_digits(value: f64, digits: i32) -> f64 {
+    let factor = 10_f64.powi(digits);
+    (value * factor).round() / factor
 }
 
 #[allow(clippy::too_many_arguments)]
