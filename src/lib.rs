@@ -13,6 +13,6 @@ pub mod svg;
 
 pub use crate::core::{
     Config, Drawable, FillStyle, Op, OpSet, OpSetType, OpType, Options, PathInfo, ResolvedOptions,
-    ShapeType,
+    ShapeType, SvgPath,
 };
 pub use crate::generator::Generator;
