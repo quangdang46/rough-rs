@@ -338,6 +338,11 @@ pub fn pattern_fill_polygons(
 ) -> OpSet {
     match options.fill_style {
         FillStyle::Solid => solid_fill_polygon(polygon_list, options, rng),
+        FillStyle::CrossHatch => cross_hatch_fill_polygon(polygon_list, options, rng),
+        FillStyle::Dots => dots_fill_polygon(polygon_list, options, rng),
+        FillStyle::Dashed => dashed_fill_polygon(polygon_list, options, rng),
+        FillStyle::Zigzag => zigzag_fill_polygon(polygon_list, options, rng),
+        FillStyle::ZigzagLine => zigzag_line_fill_polygon(polygon_list, options, rng),
         _ => hachure_fill_polygon(polygon_list, options, rng),
     }
 }
@@ -387,13 +392,167 @@ pub fn hachure_fill_polygon(
     rng: &mut RngHelper,
 ) -> OpSet {
     let lines = polygon_hachure_lines(polygon_list, options, rng);
+    OpSet::new(
+        OpSetType::FillSketch,
+        render_fill_lines(&lines, options, rng),
+    )
+}
+
+pub fn cross_hatch_fill_polygon(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let first = polygon_hachure_lines(polygon_list, options, rng);
+    let mut ops = render_fill_lines(&first, options, rng);
+    let mut cross_options = options.clone();
+    cross_options.hachure_angle = options.hachure_angle + 90.0;
+    let second = polygon_hachure_lines(polygon_list, &cross_options, rng);
+    ops.extend(render_fill_lines(&second, &cross_options, rng));
+    OpSet::new(OpSetType::FillSketch, ops)
+}
+
+pub fn dots_fill_polygon(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let mut dot_options = options.clone();
+    dot_options.hachure_angle = 0.0;
+    let lines = polygon_hachure_lines(polygon_list, &dot_options, rng);
+    let gap = dot_options.effective_hachure_gap().max(0.1);
+    let fill_weight = dot_options.effective_fill_weight();
+    let random_offset = gap / 4.0;
     let mut ops = Vec::new();
     for line in lines {
-        ops.extend(double_line_ops(
-            line[0][0], line[0][1], line[1][0], line[1][1], options, rng, true,
-        ));
+        let length = distance(line[0], line[1]);
+        let count = (length / gap).ceil() as usize;
+        let count = count.saturating_sub(1);
+        let offset = length - (count as f64 * gap);
+        let x = ((line[0][0] + line[1][0]) / 2.0) - (gap / 4.0);
+        let min_y = line[0][1].min(line[1][1]);
+        for i in 0..count {
+            let y = min_y + offset + (i as f64 * gap);
+            let cx = x + rng.offset_symmetric(random_offset, 1.0, 1.0);
+            let cy = y + rng.offset_symmetric(random_offset, 1.0, 1.0);
+            let params = generate_ellipse_params(fill_weight, fill_weight, &dot_options, rng);
+            ops.extend(
+                ellipse_with_params(cx, cy, &dot_options, params, rng)
+                    .opset
+                    .ops,
+            );
+        }
     }
     OpSet::new(OpSetType::FillSketch, ops)
+}
+
+pub fn dashed_fill_polygon(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let lines = polygon_hachure_lines(polygon_list, options, rng);
+    let offset = options.effective_dash_offset();
+    let gap = options.effective_dash_gap();
+    let period = offset + gap;
+    if period <= 0.0 {
+        return OpSet::new(OpSetType::FillSketch, Vec::new());
+    }
+
+    let mut ops = Vec::new();
+    for line in lines {
+        let length = distance(line[0], line[1]);
+        let count = (length / period).floor() as usize;
+        let start_offset = (length + gap - (count as f64 * period)) / 2.0;
+        let (p1, p2) = ordered_by_x(line);
+        let alpha = ((p2[1] - p1[1]) / (p2[0] - p1[0])).atan();
+        let cos = alpha.cos();
+        let sin = alpha.sin();
+        for i in 0..count {
+            let line_start = i as f64 * period;
+            let line_end = line_start + offset;
+            let start = [
+                p1[0] + (line_start * cos) + (start_offset * cos),
+                p1[1] + (line_start * sin) + (start_offset * sin),
+            ];
+            let end = [
+                p1[0] + (line_end * cos) + (start_offset * cos),
+                p1[1] + (line_end * sin) + (start_offset * sin),
+            ];
+            ops.extend(double_line_ops(
+                start[0], start[1], end[0], end[1], options, rng, true,
+            ));
+        }
+    }
+    OpSet::new(OpSetType::FillSketch, ops)
+}
+
+pub fn zigzag_line_fill_polygon(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let gap = options.effective_hachure_gap();
+    let zigzag_offset = options.effective_zigzag_offset();
+    if zigzag_offset <= 0.0 {
+        return OpSet::new(OpSetType::FillSketch, Vec::new());
+    }
+
+    let mut zigzag_options = options.clone();
+    zigzag_options.hachure_gap = gap + zigzag_offset;
+    let lines = polygon_hachure_lines(polygon_list, &zigzag_options, rng);
+    let diagonal = (2.0 * zigzag_offset.powi(2)).sqrt();
+    let mut ops = Vec::new();
+    for line in lines {
+        let length = distance(line[0], line[1]);
+        let count = (length / (2.0 * zigzag_offset)).round() as usize;
+        let (p1, p2) = ordered_by_x(line);
+        let alpha = ((p2[1] - p1[1]) / (p2[0] - p1[0])).atan();
+        let cos = alpha.cos();
+        let sin = alpha.sin();
+        for i in 0..count {
+            let line_start = i as f64 * 2.0 * zigzag_offset;
+            let line_end = (i + 1) as f64 * 2.0 * zigzag_offset;
+            let start = [p1[0] + (line_start * cos), p1[1] + (line_start * sin)];
+            let end = [p1[0] + (line_end * cos), p1[1] + (line_end * sin)];
+            let middle = [
+                start[0] + diagonal * (alpha + std::f64::consts::FRAC_PI_4).cos(),
+                start[1] + diagonal * (alpha + std::f64::consts::FRAC_PI_4).sin(),
+            ];
+            ops.extend(double_line_ops(
+                start[0], start[1], middle[0], middle[1], options, rng, true,
+            ));
+            ops.extend(double_line_ops(
+                middle[0], middle[1], end[0], end[1], options, rng, true,
+            ));
+        }
+    }
+    OpSet::new(OpSetType::FillSketch, ops)
+}
+
+pub fn zigzag_fill_polygon(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let gap = options.effective_hachure_gap().max(0.1);
+    let mut hachure_options = options.clone();
+    hachure_options.hachure_gap = gap;
+    let lines = polygon_hachure_lines(polygon_list, &hachure_options, rng);
+    let zigzag_angle = options.hachure_angle.to_radians();
+    let delta_x = gap * 0.5 * zigzag_angle.cos();
+    let delta_y = gap * 0.5 * zigzag_angle.sin();
+    let mut zigzag_lines = Vec::new();
+    for [p1, p2] in lines {
+        if distance(p1, p2) != 0.0 {
+            zigzag_lines.push([[p1[0] - delta_x, p1[1] + delta_y], p2]);
+            zigzag_lines.push([[p1[0] + delta_x, p1[1] - delta_y], p2]);
+        }
+    }
+    OpSet::new(
+        OpSetType::FillSketch,
+        render_fill_lines(&zigzag_lines, options, rng),
+    )
 }
 
 pub fn polygon_hachure_lines(
@@ -412,6 +571,28 @@ pub fn polygon_hachure_lines(
         skip_offset = gap;
     }
     hachure_lines(polygon_list, gap, angle, skip_offset)
+}
+
+fn render_fill_lines(
+    lines: &[[Point; 2]],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> Vec<Op> {
+    let mut ops = Vec::new();
+    for line in lines {
+        ops.extend(double_line_ops(
+            line[0][0], line[0][1], line[1][0], line[1][1], options, rng, true,
+        ));
+    }
+    ops
+}
+
+fn ordered_by_x(line: [Point; 2]) -> (Point, Point) {
+    if line[0][0] > line[1][0] {
+        (line[1], line[0])
+    } else {
+        (line[0], line[1])
+    }
 }
 
 pub fn double_line_ops(
