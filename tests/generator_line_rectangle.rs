@@ -1,5 +1,6 @@
+use approx::assert_relative_eq;
 use rough_rs::svg::drawable_to_paths;
-use rough_rs::{Config, Generator, OpType, Options, ShapeType};
+use rough_rs::{Config, FillStyle, Generator, OpType, Options, ShapeType};
 use serde_json::Value;
 
 #[test]
@@ -90,4 +91,66 @@ fn generator_rectangle_matches_legacy_fixture_path() {
     let paths = drawable_to_paths(&drawable);
 
     assert_eq!(paths[0].d, expected_path);
+}
+
+#[test]
+fn generator_rectangle_hachure_fill_matches_legacy_fixture_ops() {
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/reference.json")).unwrap();
+    let case = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "rectangle_fill_hachure")
+        .expect("hachure fixture should exist");
+    let expected_ops = case["drawable"]["sets"][0]["ops"].as_array().unwrap();
+    let generator = Generator::new(Config::default());
+
+    let drawable = generator.rectangle(
+        10.0,
+        10.0,
+        120.0,
+        80.0,
+        Some(Options {
+            seed: Some(777),
+            fill: Some("red".to_string()),
+            fill_style: Some(FillStyle::Hachure),
+            ..Options::default()
+        }),
+    );
+
+    assert_eq!(drawable.sets[0].set_type, rough_rs::OpSetType::FillSketch);
+    assert_eq!(drawable.sets[0].ops.len(), expected_ops.len());
+    for (actual, expected) in drawable.sets[0].ops.iter().zip(expected_ops) {
+        let expected_data = expected["data"].as_array().unwrap();
+        assert_eq!(actual.data.len(), expected_data.len());
+        for (actual_value, expected_value) in actual.data.iter().zip(expected_data) {
+            assert_relative_eq!(
+                *actual_value,
+                expected_value.as_f64().unwrap(),
+                epsilon = 1e-10
+            );
+        }
+    }
+}
+
+#[test]
+fn generator_rectangle_solid_fill_maps_to_fill_path() {
+    let generator = Generator::new(Config::default());
+    let drawable = generator.rectangle(
+        10.0,
+        10.0,
+        120.0,
+        80.0,
+        Some(Options {
+            seed: Some(777),
+            fill: Some("red".to_string()),
+            fill_style: Some(FillStyle::Solid),
+            ..Options::default()
+        }),
+    );
+    let paths = drawable_to_paths(&drawable);
+
+    assert_eq!(drawable.sets[0].set_type, rough_rs::OpSetType::FillPath);
+    assert_eq!(paths[0].stroke, "none");
+    assert_eq!(paths[0].fill, "red");
 }

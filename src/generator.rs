@@ -1,5 +1,6 @@
 use crate::core::{Config, Drawable, OpSet, Options, ResolvedOptions, ShapeType};
 use crate::math::random_seed;
+use crate::math::RngHelper;
 use crate::renderer;
 
 #[derive(Debug, Clone)]
@@ -58,7 +59,21 @@ impl Generator {
     ) -> Drawable {
         let resolved = self.resolve_options(options.as_ref());
         let mut sets = Vec::new();
-        let outline = renderer::rectangle(x, y, width, height, &resolved);
+        let mut rng = RngHelper::new(resolved.seed);
+        let outline = renderer::rectangle_with_rng(x, y, width, height, &resolved, &mut rng);
+        if resolved.fill.is_some() {
+            let points = vec![
+                [x, y],
+                [x + width, y],
+                [x + width, y + height],
+                [x, y + height],
+            ];
+            sets.push(renderer::pattern_fill_polygons(
+                &[points],
+                &resolved,
+                &mut rng,
+            ));
+        }
         if resolved.stroke != "none" {
             sets.push(outline);
         }

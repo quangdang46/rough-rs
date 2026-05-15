@@ -1,4 +1,4 @@
-use crate::core::{Op, OpSet, OpSetType, OpType, ResolvedOptions};
+use crate::core::{FillStyle, Op, OpSet, OpSetType, OpType, ResolvedOptions};
 use crate::geometry::Point;
 use crate::math::RngHelper;
 use std::fmt;
@@ -40,13 +40,22 @@ pub fn line(x1: f64, y1: f64, x2: f64, y2: f64, options: &ResolvedOptions) -> Op
 }
 
 pub fn linear_path(points: &[Point], close: bool, options: &ResolvedOptions) -> OpSet {
+    let mut rng = RngHelper::new(options.seed);
+    linear_path_with_rng(points, close, options, &mut rng)
+}
+
+pub fn linear_path_with_rng(
+    points: &[Point],
+    close: bool,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
     let len = points.len();
     if len > 2 {
-        let mut rng = RngHelper::new(options.seed);
         let mut ops = Vec::new();
         for pair in points.windows(2) {
             ops.extend(double_line_ops(
-                pair[0][0], pair[0][1], pair[1][0], pair[1][1], options, &mut rng, false,
+                pair[0][0], pair[0][1], pair[1][0], pair[1][1], options, rng, false,
             ));
         }
         if close {
@@ -56,7 +65,7 @@ pub fn linear_path(points: &[Point], close: bool, options: &ResolvedOptions) -> 
                 points[0][0],
                 points[0][1],
                 options,
-                &mut rng,
+                rng,
                 false,
             ));
         }
@@ -79,13 +88,25 @@ pub fn polygon(points: &[Point], options: &ResolvedOptions) -> OpSet {
 }
 
 pub fn rectangle(x: f64, y: f64, width: f64, height: f64, options: &ResolvedOptions) -> OpSet {
+    let mut rng = RngHelper::new(options.seed);
+    rectangle_with_rng(x, y, width, height, options, &mut rng)
+}
+
+pub fn rectangle_with_rng(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
     let points = [
         [x, y],
         [x + width, y],
         [x + width, y + height],
         [x, y + height],
     ];
-    polygon(&points, options)
+    linear_path_with_rng(&points, true, options, rng)
 }
 
 pub fn ellipse(x: f64, y: f64, width: f64, height: f64, options: &ResolvedOptions) -> OpSet {
@@ -157,6 +178,80 @@ pub fn ellipse_with_params(
         estimated_points: cp1,
         opset: OpSet::new(OpSetType::Path, ops),
     }
+}
+
+pub fn solid_fill_polygon(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let mut ops = Vec::new();
+    for points in polygon_list {
+        if points.len() > 2 {
+            let offset = options.max_randomness_offset;
+            ops.push(Op::new(
+                OpType::Move,
+                vec![
+                    points[0][0] + rng.offset_symmetric(offset, options.roughness, 1.0),
+                    points[0][1] + rng.offset_symmetric(offset, options.roughness, 1.0),
+                ],
+            ));
+            for point in &points[1..] {
+                ops.push(Op::new(
+                    OpType::LineTo,
+                    vec![
+                        point[0] + rng.offset_symmetric(offset, options.roughness, 1.0),
+                        point[1] + rng.offset_symmetric(offset, options.roughness, 1.0),
+                    ],
+                ));
+            }
+        }
+    }
+    OpSet::new(OpSetType::FillPath, ops)
+}
+
+pub fn pattern_fill_polygons(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    match options.fill_style {
+        FillStyle::Solid => solid_fill_polygon(polygon_list, options, rng),
+        _ => hachure_fill_polygon(polygon_list, options, rng),
+    }
+}
+
+pub fn hachure_fill_polygon(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let lines = polygon_hachure_lines(polygon_list, options, rng);
+    let mut ops = Vec::new();
+    for line in lines {
+        ops.extend(double_line_ops(
+            line[0][0], line[0][1], line[1][0], line[1][1], options, rng, true,
+        ));
+    }
+    OpSet::new(OpSetType::FillSketch, ops)
+}
+
+pub fn polygon_hachure_lines(
+    polygon_list: &[Vec<Point>],
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> Vec<[Point; 2]> {
+    let angle = options.hachure_angle + 90.0;
+    let mut gap = options.hachure_gap;
+    if gap < 0.0 {
+        gap = options.stroke_width * 4.0;
+    }
+    gap = js_round(gap.max(0.1));
+    let mut skip_offset = 1.0;
+    if options.roughness >= 1.0 && rng.next_f64() > 0.7 {
+        skip_offset = gap;
+    }
+    hachure_lines(polygon_list, gap, angle, skip_offset)
 }
 
 pub fn double_line_ops(
@@ -591,6 +686,166 @@ fn simplify_points(
     }
 
     out_points.clone()
+}
+
+fn hachure_lines(
+    polygon_list: &[Vec<Point>],
+    hachure_gap: f64,
+    hachure_angle: f64,
+    hachure_step_offset: f64,
+) -> Vec<[Point; 2]> {
+    let gap = hachure_gap.max(0.1);
+    let mut polygons = polygon_list.to_vec();
+    let rotation_center = [0.0, 0.0];
+    if hachure_angle != 0.0 {
+        rotate_polygons_degrees(&mut polygons, rotation_center, hachure_angle);
+    }
+    let mut lines = straight_hachure_lines(&polygons, gap, hachure_step_offset);
+    if hachure_angle != 0.0 {
+        rotate_lines_degrees(&mut lines, rotation_center, -hachure_angle);
+    }
+    lines
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HachureEdge {
+    ymin: f64,
+    ymax: f64,
+    x: f64,
+    islope: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActiveHachureEdge {
+    edge: HachureEdge,
+}
+
+fn straight_hachure_lines(
+    polygons: &[Vec<Point>],
+    mut gap: f64,
+    hachure_step_offset: f64,
+) -> Vec<[Point; 2]> {
+    let mut vertex_array = Vec::new();
+    for polygon in polygons {
+        if polygon.is_empty() {
+            continue;
+        }
+        let mut vertices = polygon.clone();
+        if vertices.first() != vertices.last() {
+            vertices.push(vertices[0]);
+        }
+        if vertices.len() > 2 {
+            vertex_array.push(vertices);
+        }
+    }
+
+    let mut lines = Vec::new();
+    gap = gap.max(0.1);
+    let mut edges = Vec::new();
+    for vertices in &vertex_array {
+        for pair in vertices.windows(2) {
+            let p1 = pair[0];
+            let p2 = pair[1];
+            if p1[1] != p2[1] {
+                let ymin = p1[1].min(p2[1]);
+                edges.push(HachureEdge {
+                    ymin,
+                    ymax: p1[1].max(p2[1]),
+                    x: if ymin == p1[1] { p1[0] } else { p2[0] },
+                    islope: (p2[0] - p1[0]) / (p2[1] - p1[1]),
+                });
+            }
+        }
+    }
+    edges.sort_by(compare_edges);
+    if edges.is_empty() {
+        return lines;
+    }
+
+    let mut active_edges: Vec<ActiveHachureEdge> = Vec::new();
+    let mut y = edges[0].ymin;
+    let mut iteration = 0.0;
+    while !active_edges.is_empty() || !edges.is_empty() {
+        if !edges.is_empty() {
+            let mut ix = None;
+            for (i, edge) in edges.iter().enumerate() {
+                if edge.ymin > y {
+                    break;
+                }
+                ix = Some(i);
+            }
+            if let Some(ix) = ix {
+                let removed = edges.drain(0..=ix).collect::<Vec<_>>();
+                active_edges.extend(removed.into_iter().map(|edge| ActiveHachureEdge { edge }));
+            }
+        }
+
+        active_edges.retain(|active| active.edge.ymax > y);
+        active_edges.sort_by(|a, b| compare_f64(a.edge.x, b.edge.x));
+
+        if (hachure_step_offset != 1.0 || js_remainder(iteration, gap) == 0.0)
+            && active_edges.len() > 1
+        {
+            let mut i = 0;
+            while i + 1 < active_edges.len() {
+                let ce = active_edges[i].edge;
+                let ne = active_edges[i + 1].edge;
+                lines.push([[js_round(ce.x), y], [js_round(ne.x), y]]);
+                i += 2;
+            }
+        }
+
+        y += hachure_step_offset;
+        for active in &mut active_edges {
+            active.edge.x += hachure_step_offset * active.edge.islope;
+        }
+        iteration += 1.0;
+    }
+
+    lines
+}
+
+fn rotate_polygons_degrees(polygons: &mut [Vec<Point>], center: Point, degrees: f64) {
+    for polygon in polygons {
+        for point in polygon {
+            *point = rotate_point_degrees(*point, center, degrees);
+        }
+    }
+}
+
+fn rotate_lines_degrees(lines: &mut [[Point; 2]], center: Point, degrees: f64) {
+    for line in lines {
+        line[0] = rotate_point_degrees(line[0], center, degrees);
+        line[1] = rotate_point_degrees(line[1], center, degrees);
+    }
+}
+
+fn rotate_point_degrees(point: Point, center: Point, degrees: f64) -> Point {
+    let angle = (std::f64::consts::PI / 180.0) * degrees;
+    let cos = angle.cos();
+    let sin = angle.sin();
+    [
+        ((point[0] - center[0]) * cos) - ((point[1] - center[1]) * sin) + center[0],
+        ((point[0] - center[0]) * sin) + ((point[1] - center[1]) * cos) + center[1],
+    ]
+}
+
+fn compare_edges(a: &HachureEdge, b: &HachureEdge) -> std::cmp::Ordering {
+    compare_f64(a.ymin, b.ymin)
+        .then(compare_f64(a.x, b.x))
+        .then(compare_f64(a.ymax, b.ymax))
+}
+
+fn compare_f64(a: f64, b: f64) -> std::cmp::Ordering {
+    a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal)
+}
+
+fn js_round(value: f64) -> f64 {
+    (value + 0.5).floor()
+}
+
+fn js_remainder(a: f64, b: f64) -> f64 {
+    a - (a / b).trunc() * b
 }
 
 #[cfg(test)]
