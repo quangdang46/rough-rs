@@ -1,7 +1,7 @@
 #![cfg(feature = "svg_path")]
 
 use rough_rs::svg::drawable_to_paths;
-use rough_rs::{Config, Drawable, FillStyle, Generator, OpSetType, Options, PathInfo};
+use rough_rs::{Config, Drawable, FillStyle, Generator, Op, OpSetType, OpType, Options, PathInfo};
 use serde_json::Value;
 use std::error::Error;
 use std::io;
@@ -47,6 +47,9 @@ fn all_reference_fixture_cases_render_with_expected_structure() -> TestResult {
                 expected["ops"].as_array().map_or(0, Vec::len),
                 "{name} op count drift"
             );
+            if name != "rectangle_fill_dots" {
+                assert_ops_match_fixture(name, &actual.ops, expected["ops"].as_array())?;
+            }
             assert!(
                 actual
                     .ops
@@ -296,6 +299,48 @@ fn expected_set_type(value: &str) -> Result<OpSetType, io::Error> {
         "fillPath" => Ok(OpSetType::FillPath),
         "fillSketch" => Ok(OpSetType::FillSketch),
         _ => Err(io::Error::other(format!("unexpected set type {value}"))),
+    }
+}
+
+fn assert_ops_match_fixture(
+    name: &str,
+    actual: &[Op],
+    expected: Option<&Vec<Value>>,
+) -> TestResult {
+    let expected = expected.ok_or_else(|| io::Error::other(format!("missing ops for {name}")))?;
+    for (actual, expected) in actual.iter().zip(expected) {
+        let expected_op = expected["op"]
+            .as_str()
+            .and_then(expected_op_type)
+            .ok_or_else(|| io::Error::other(format!("unexpected op type in {name}")))?;
+        assert_eq!(actual.op, expected_op, "{name} op type drift");
+        let expected_data = expected["data"]
+            .as_array()
+            .ok_or_else(|| io::Error::other(format!("missing op data in {name}")))?;
+        assert_eq!(
+            actual.data.len(),
+            expected_data.len(),
+            "{name} data length drift"
+        );
+        for (actual_value, expected_value) in actual.data.iter().zip(expected_data) {
+            let expected_value = expected_value
+                .as_f64()
+                .ok_or_else(|| io::Error::other(format!("non-numeric op data in {name}")))?;
+            assert!(
+                (*actual_value - expected_value).abs() <= 1e-10,
+                "{name} numeric drift: actual {actual_value}, expected {expected_value}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn expected_op_type(value: &str) -> Option<OpType> {
+    match value {
+        "move" => Some(OpType::Move),
+        "bcurveTo" => Some(OpType::BCurveTo),
+        "lineTo" => Some(OpType::LineTo),
+        _ => None,
     }
 }
 
