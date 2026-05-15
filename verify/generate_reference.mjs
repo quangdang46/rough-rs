@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +21,14 @@ if (!fs.existsSync(roughBundle)) {
 
 const require = createRequire(import.meta.url);
 const rough = require(roughBundle);
+const { curveToBezier } = await import(
+  pathToFileURL(
+    path.join(legacyRoot, "node_modules", "points-on-curve", "lib", "curve-to-bezier.js"),
+  )
+);
+const { pointsOnBezierCurves } = await import(
+  pathToFileURL(path.join(legacyRoot, "node_modules", "points-on-curve", "lib", "index.js"))
+);
 
 const rngSeeds = [1, 42, 12345, 2147483647];
 const shapeCases = [
@@ -167,9 +175,27 @@ const reference = {
   roughVersion: "4.6.6",
   source: "legacy/rough",
   rng: Object.fromEntries(rngSeeds.map((seed) => [seed, randomSequence(seed, 20)])),
+  curveUtilities: curveUtilityReference(),
   cases: [...shapeCases, ...fillCases].map(runCase),
 };
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 fs.writeFileSync(outputPath, `${JSON.stringify(reference, null, 2)}\n`);
 console.log(`Wrote ${path.relative(repoRoot, outputPath)}`);
+
+function curveUtilityReference() {
+  const points = [
+    [0, 0],
+    [10, 15],
+    [20, 0],
+    [30, 10],
+  ];
+  const bezier = curveToBezier(points, 0);
+  return {
+    input: points,
+    curveTightness: 0,
+    curveToBezier: bezier,
+    pointsOnBezierCurves: pointsOnBezierCurves(bezier, 0.15),
+    simplifiedPointsOnBezierCurves: pointsOnBezierCurves(bezier, 0.15, 5),
+  };
+}

@@ -7,6 +7,9 @@ fn reference_fixture_contains_required_parity_matrix() {
 
     assert_eq!(parsed["roughVersion"], "4.6.6");
     assert_eq!(parsed["source"], "legacy/rough");
+    assert!(parsed["curveUtilities"]["curveToBezier"].is_array());
+    assert!(parsed["curveUtilities"]["pointsOnBezierCurves"].is_array());
+    assert!(parsed["curveUtilities"]["simplifiedPointsOnBezierCurves"].is_array());
 
     for seed in ["1", "42", "12345", "2147483647"] {
         let sequence = parsed["rng"][seed]
