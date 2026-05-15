@@ -16,3 +16,4 @@ pub use crate::core::{
     ShapeType, SvgPath,
 };
 pub use crate::generator::Generator;
+pub use crate::math::RngHelper;
