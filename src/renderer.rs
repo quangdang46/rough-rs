@@ -10,6 +10,55 @@ pub fn line(x1: f64, y1: f64, x2: f64, y2: f64, options: &ResolvedOptions) -> Op
     )
 }
 
+pub fn linear_path(points: &[Point], close: bool, options: &ResolvedOptions) -> OpSet {
+    let len = points.len();
+    if len > 2 {
+        let mut rng = RngHelper::new(options.seed);
+        let mut ops = Vec::new();
+        for pair in points.windows(2) {
+            ops.extend(double_line_ops(
+                pair[0][0], pair[0][1], pair[1][0], pair[1][1], options, &mut rng, false,
+            ));
+        }
+        if close {
+            ops.extend(double_line_ops(
+                points[len - 1][0],
+                points[len - 1][1],
+                points[0][0],
+                points[0][1],
+                options,
+                &mut rng,
+                false,
+            ));
+        }
+        OpSet::new(OpSetType::Path, ops)
+    } else if len == 2 {
+        line(
+            points[0][0],
+            points[0][1],
+            points[1][0],
+            points[1][1],
+            options,
+        )
+    } else {
+        empty_path(options)
+    }
+}
+
+pub fn polygon(points: &[Point], options: &ResolvedOptions) -> OpSet {
+    linear_path(points, true, options)
+}
+
+pub fn rectangle(x: f64, y: f64, width: f64, height: f64, options: &ResolvedOptions) -> OpSet {
+    let points = [
+        [x, y],
+        [x + width, y],
+        [x + width, y + height],
+        [x, y + height],
+    ];
+    polygon(&points, options)
+}
+
 pub fn double_line_ops(
     x1: f64,
     y1: f64,
@@ -188,6 +237,39 @@ mod tests {
         });
 
         let actual = line(10.0, 10.0, 200.0, 100.0, &options);
+
+        assert_eq!(actual.ops.len(), expected_ops.len());
+        for (actual, expected) in actual.ops.iter().zip(expected_ops) {
+            assert_eq!(op_name(actual.op), expected["op"].as_str().unwrap());
+            let expected_data = expected["data"].as_array().unwrap();
+            assert_eq!(actual.data.len(), expected_data.len());
+            for (actual_value, expected_value) in actual.data.iter().zip(expected_data) {
+                assert_relative_eq!(
+                    *actual_value,
+                    expected_value.as_f64().unwrap(),
+                    epsilon = 1e-12
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn seeded_rectangle_matches_legacy_fixture_ops() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/reference.json")).unwrap();
+        let case = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == "rectangle_seed_42")
+            .expect("rectangle fixture should exist");
+        let expected_ops = case["drawable"]["sets"][0]["ops"].as_array().unwrap();
+        let options = ResolvedOptions::from_options(&Options {
+            seed: Some(42),
+            ..Options::default()
+        });
+
+        let actual = rectangle(10.0, 10.0, 200.0, 100.0, &options);
 
         assert_eq!(actual.ops.len(), expected_ops.len());
         for (actual, expected) in actual.ops.iter().zip(expected_ops) {

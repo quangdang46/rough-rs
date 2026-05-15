@@ -1,4 +1,4 @@
-use crate::core::{Config, Drawable, Options, ResolvedOptions, ShapeType};
+use crate::core::{Config, Drawable, OpSet, Options, ResolvedOptions, ShapeType};
 use crate::math::random_seed;
 use crate::renderer;
 
@@ -36,6 +36,40 @@ impl Generator {
             shape,
             options: self.default_options.clone(),
             sets: vec![renderer::empty_path(&self.default_options)],
+        }
+    }
+
+    pub fn line(&self, x1: f64, y1: f64, x2: f64, y2: f64, options: Option<Options>) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        self.drawable(
+            ShapeType::Line,
+            vec![renderer::line(x1, y1, x2, y2, &resolved)],
+            resolved,
+        )
+    }
+
+    pub fn rectangle(
+        &self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        options: Option<Options>,
+    ) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        let mut sets = Vec::new();
+        let outline = renderer::rectangle(x, y, width, height, &resolved);
+        if resolved.stroke != "none" {
+            sets.push(outline);
+        }
+        self.drawable(ShapeType::Rectangle, sets, resolved)
+    }
+
+    fn drawable(&self, shape: ShapeType, sets: Vec<OpSet>, options: ResolvedOptions) -> Drawable {
+        Drawable {
+            shape,
+            options,
+            sets,
         }
     }
 }
