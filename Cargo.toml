@@ -15,8 +15,13 @@ svgtypes = { version = "0.15", optional = true }
 
 [dev-dependencies]
 approx = "0.5"
+criterion = "0.5"
 serde_json = "1"
 
 [features]
 default = ["rand", "svg_path"]
 svg_path = ["dep:svgtypes"]
+
+[[bench]]
+name = "primitives"
+harness = false
