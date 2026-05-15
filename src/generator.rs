@@ -1,8 +1,11 @@
-use crate::core::{Config, Drawable, OpSet, Options, ResolvedOptions, ShapeType};
+use crate::core::{
+    Config, Drawable, FillStyle, OpSet, OpSetType, Options, ResolvedOptions, ShapeType,
+};
 use crate::geometry::Point;
 use crate::math::{random_seed, RngHelper};
 use crate::renderer;
 
+/// Public rough.js-style shape generator.
 #[derive(Debug, Clone)]
 pub struct Generator {
     default_options: ResolvedOptions,
@@ -90,9 +93,25 @@ impl Generator {
     ) -> Drawable {
         let resolved = self.resolve_options(options.as_ref());
         let mut sets = Vec::new();
-        let outline = renderer::ellipse(x, y, width, height, &resolved);
+        let mut rng = RngHelper::new(resolved.seed);
+        let ellipse_params = renderer::generate_ellipse_params(width, height, &resolved, &mut rng);
+        let ellipse = renderer::ellipse_with_params(x, y, &resolved, ellipse_params, &mut rng);
+        if resolved.fill.is_some() {
+            if resolved.fill_style == FillStyle::Solid {
+                let mut shape =
+                    renderer::ellipse_with_params(x, y, &resolved, ellipse_params, &mut rng).opset;
+                shape.set_type = OpSetType::FillPath;
+                sets.push(shape);
+            } else {
+                sets.push(renderer::pattern_fill_polygons(
+                    std::slice::from_ref(&ellipse.estimated_points),
+                    &resolved,
+                    &mut rng,
+                ));
+            }
+        }
         if resolved.stroke != "none" {
-            sets.push(outline);
+            sets.push(ellipse.opset);
         }
         self.drawable(ShapeType::Ellipse, sets, resolved)
     }

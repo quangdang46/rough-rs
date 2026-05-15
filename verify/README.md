@@ -3,6 +3,13 @@
 `generate_reference.mjs` records rough.js 4.6.6 behavior from the vendored
 `legacy/rough` source tree. The generated JSON is the executable reference for
 RNG parity, operation structure, SVG path strings, primitives, and fill styles.
+The matrix intentionally includes every supported generator method, all fill
+styles, representative option interactions, SVG path command families, seed=0
+structural coverage, and edge cases such as tiny or negative dimensions.
+The generator installs a deterministic `Math.random` implementation so
+rough.js's nondeterministic dot-fill and seed=0 paths can be regenerated without
+fixture churn; tests still treat those cases as structural comparisons when the
+runtime behavior is intentionally nondeterministic.
 
 Regenerate fixtures from the repository root:
 

@@ -25,6 +25,11 @@ fn roughjs_default_options_match_legacy_generator() {
     assert!(!options.disable_multi_stroke);
     assert!(!options.disable_multi_stroke_fill);
     assert!(!options.preserve_vertices);
+    assert_eq!(options.fixed_decimal_place_digits, None);
+    assert_eq!(options.stroke_line_dash, None);
+    assert_eq!(options.stroke_line_dash_offset, None);
+    assert_eq!(options.fill_line_dash, None);
+    assert_eq!(options.fill_line_dash_offset, None);
     assert_eq!(options.fill_shape_roughness_gain, 0.8);
 }
 
@@ -60,6 +65,11 @@ fn config_and_per_call_options_merge_over_defaults() {
     let resolved = generator.resolve_options(Some(&Options {
         stroke_width: Some(5.0),
         fill_style: Some(FillStyle::Dots),
+        fixed_decimal_place_digits: Some(2),
+        stroke_line_dash: Some(vec![4.0, 2.0]),
+        stroke_line_dash_offset: Some(1.0),
+        fill_line_dash: Some(vec![3.0, 1.0]),
+        fill_line_dash_offset: Some(2.0),
         ..Options::default()
     }));
 
@@ -67,6 +77,11 @@ fn config_and_per_call_options_merge_over_defaults() {
     assert_eq!(resolved.roughness, 2.0);
     assert_eq!(resolved.stroke_width, 5.0);
     assert_eq!(resolved.fill_style, FillStyle::Dots);
+    assert_eq!(resolved.fixed_decimal_place_digits, Some(2));
+    assert_eq!(resolved.stroke_line_dash, Some(vec![4.0, 2.0]));
+    assert_eq!(resolved.stroke_line_dash_offset, Some(1.0));
+    assert_eq!(resolved.fill_line_dash, Some(vec![3.0, 1.0]));
+    assert_eq!(resolved.fill_line_dash_offset, Some(2.0));
 }
 
 #[test]
@@ -94,6 +109,11 @@ fn fill_style_round_trips_roughjs_names() {
 fn shape_type_uses_roughjs_public_names() {
     assert_eq!(ShapeType::Line.to_string(), "line");
     assert_eq!(ShapeType::Rectangle.to_string(), "rectangle");
+    assert_eq!(ShapeType::Ellipse.to_string(), "ellipse");
+    assert_eq!(ShapeType::Circle.to_string(), "circle");
     assert_eq!(ShapeType::LinearPath.to_string(), "linearPath");
+    assert_eq!(ShapeType::Arc.to_string(), "arc");
+    assert_eq!(ShapeType::Curve.to_string(), "curve");
+    assert_eq!(ShapeType::Polygon.to_string(), "polygon");
     assert_eq!(ShapeType::Path.to_string(), "path");
 }

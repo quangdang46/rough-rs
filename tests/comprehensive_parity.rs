@@ -5,6 +5,7 @@ use rough_rs::{Config, Drawable, FillStyle, Generator, Op, OpSetType, OpType, Op
 use serde_json::Value;
 use std::error::Error;
 use std::io;
+use std::str::FromStr;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -20,7 +21,7 @@ fn all_reference_fixture_cases_render_with_expected_structure() -> TestResult {
         let name = case["name"]
             .as_str()
             .ok_or_else(|| io::Error::other("fixture case should have a name"))?;
-        let drawable = render_fixture_case(&generator, name)
+        let drawable = render_fixture_case(&generator, case)
             .ok_or_else(|| io::Error::other(format!("missing renderer for fixture {name}")))?;
         let expected_sets = case["drawable"]["sets"]
             .as_array()
@@ -47,7 +48,7 @@ fn all_reference_fixture_cases_render_with_expected_structure() -> TestResult {
                 expected["ops"].as_array().map_or(0, Vec::len),
                 "{name} op count drift"
             );
-            if name != "rectangle_fill_dots" {
+            if case["strictOps"].as_bool().unwrap_or(true) {
                 assert_ops_match_fixture(name, &actual.ops, expected["ops"].as_array())?;
             }
             assert!(
@@ -167,130 +168,131 @@ fn e2e_svg_sample_contains_valid_embeddable_paths() {
     assert!(svg.ends_with("</svg>"));
 }
 
-fn render_fixture_case(generator: &Generator, name: &str) -> Option<Drawable> {
-    let drawable = match name {
-        "line_seed_1" => generator.line(
-            10.0,
-            10.0,
-            200.0,
-            100.0,
-            Some(Options {
-                seed: Some(1),
-                ..Options::default()
-            }),
-        ),
-        "rectangle_seed_42" => generator.rectangle(
-            10.0,
-            10.0,
-            200.0,
-            100.0,
-            Some(Options {
-                seed: Some(42),
-                ..Options::default()
-            }),
-        ),
-        "ellipse_seed_99" => generator.ellipse(
-            100.0,
-            100.0,
-            200.0,
-            150.0,
-            Some(Options {
-                seed: Some(99),
-                ..Options::default()
-            }),
-        ),
-        "circle_seed_12345" => generator.circle(
-            100.0,
-            100.0,
-            80.0,
-            Some(Options {
-                seed: Some(12345),
-                ..Options::default()
-            }),
-        ),
-        "polygon_seed_42" => generator.polygon(
-            &[[10.0, 10.0], [140.0, 20.0], [120.0, 90.0], [30.0, 110.0]],
-            Some(Options {
-                seed: Some(42),
-                ..Options::default()
-            }),
-        ),
-        "linear_path_seed_42" => generator.linear_path(
-            &[[10.0, 10.0], [40.0, 70.0], [100.0, 30.0], [160.0, 90.0]],
-            Some(Options {
-                seed: Some(42),
-                ..Options::default()
-            }),
-        ),
-        "arc_open_seed_42" => generator.arc(
-            100.0,
-            100.0,
-            160.0,
-            90.0,
-            std::f64::consts::PI / 6.0,
-            std::f64::consts::PI * 1.35,
-            false,
-            Some(Options {
-                seed: Some(42),
-                ..Options::default()
-            }),
-        ),
-        "arc_closed_seed_42" => generator.arc(
-            100.0,
-            100.0,
-            160.0,
-            90.0,
-            std::f64::consts::PI / 6.0,
-            std::f64::consts::PI * 1.35,
-            true,
-            Some(Options {
-                seed: Some(42),
-                fill: Some("red".to_string()),
-                ..Options::default()
-            }),
-        ),
-        "curve_seed_42" => generator.curve(
-            &[[10.0, 80.0], [40.0, 10.0], [100.0, 110.0], [160.0, 40.0]],
-            Some(Options {
-                seed: Some(42),
-                ..Options::default()
-            }),
-        ),
-        "svg_path_arc_seed_42" => generator.path(
-            "M80 80 A 45 45, 0, 0, 0, 125 125 L 125 80 Z",
-            Some(Options {
-                seed: Some(42),
-                fill: Some("green".to_string()),
-                ..Options::default()
-            }),
-        ),
-        name if name.starts_with("rectangle_fill_") => {
-            let fill_style = match name {
-                "rectangle_fill_hachure" => FillStyle::Hachure,
-                "rectangle_fill_solid" => FillStyle::Solid,
-                "rectangle_fill_zigzag" => FillStyle::Zigzag,
-                "rectangle_fill_cross_hatch" => FillStyle::CrossHatch,
-                "rectangle_fill_dots" => FillStyle::Dots,
-                "rectangle_fill_dashed" => FillStyle::Dashed,
-                "rectangle_fill_zigzag_line" => FillStyle::ZigzagLine,
-                _ => return None,
-            };
-            generator.rectangle(
-                10.0,
-                10.0,
-                120.0,
-                80.0,
-                Some(Options {
-                    seed: Some(777),
-                    fill: Some("red".to_string()),
-                    fill_style: Some(fill_style),
-                    ..Options::default()
-                }),
-            )
-        }
-        _ => return None,
-    };
-    Some(drawable)
+fn render_fixture_case(generator: &Generator, case: &Value) -> Option<Drawable> {
+    let method = case["method"].as_str()?;
+    let args = case["args"].as_array()?;
+    let options = parse_options(&case["options"])?;
+
+    match method {
+        "line" => Some(generator.line(
+            arg_f64(args, 0)?,
+            arg_f64(args, 1)?,
+            arg_f64(args, 2)?,
+            arg_f64(args, 3)?,
+            Some(options),
+        )),
+        "rectangle" => Some(generator.rectangle(
+            arg_f64(args, 0)?,
+            arg_f64(args, 1)?,
+            arg_f64(args, 2)?,
+            arg_f64(args, 3)?,
+            Some(options),
+        )),
+        "ellipse" => Some(generator.ellipse(
+            arg_f64(args, 0)?,
+            arg_f64(args, 1)?,
+            arg_f64(args, 2)?,
+            arg_f64(args, 3)?,
+            Some(options),
+        )),
+        "circle" => Some(generator.circle(
+            arg_f64(args, 0)?,
+            arg_f64(args, 1)?,
+            arg_f64(args, 2)?,
+            Some(options),
+        )),
+        "polygon" => Some(generator.polygon(&point_array(args.first()?)?, Some(options))),
+        "linearPath" => Some(generator.linear_path(&point_array(args.first()?)?, Some(options))),
+        "arc" => Some(generator.arc(
+            arg_f64(args, 0)?,
+            arg_f64(args, 1)?,
+            arg_f64(args, 2)?,
+            arg_f64(args, 3)?,
+            arg_f64(args, 4)?,
+            arg_f64(args, 5)?,
+            args.get(6)?.as_bool()?,
+            Some(options),
+        )),
+        "curve" => Some(generator.curve(&point_array(args.first()?)?, Some(options))),
+        "path" => Some(generator.path(args.first()?.as_str()?, Some(options))),
+        _ => None,
+    }
+}
+
+fn arg_f64(args: &[Value], index: usize) -> Option<f64> {
+    args.get(index)?.as_f64()
+}
+
+fn point_array(value: &Value) -> Option<Vec<[f64; 2]>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|point| {
+            let point = point.as_array()?;
+            Some([point.first()?.as_f64()?, point.get(1)?.as_f64()?])
+        })
+        .collect()
+}
+
+fn parse_options(value: &Value) -> Option<Options> {
+    let mut options = Options::default();
+    let object = value.as_object()?;
+
+    options.max_randomness_offset = f64_option(object.get("maxRandomnessOffset"));
+    options.roughness = f64_option(object.get("roughness"));
+    options.bowing = f64_option(object.get("bowing"));
+    options.stroke = string_option(object.get("stroke"));
+    options.stroke_width = f64_option(object.get("strokeWidth"));
+    options.curve_fitting = f64_option(object.get("curveFitting"));
+    options.curve_tightness = f64_option(object.get("curveTightness"));
+    options.curve_step_count = f64_option(object.get("curveStepCount"));
+    options.fill = string_option(object.get("fill"));
+    options.fill_style = object
+        .get("fillStyle")
+        .and_then(Value::as_str)
+        .and_then(|value| FillStyle::from_str(value).ok());
+    options.fill_weight = f64_option(object.get("fillWeight"));
+    options.hachure_angle = f64_option(object.get("hachureAngle"));
+    options.hachure_gap = f64_option(object.get("hachureGap"));
+    options.simplification = f64_option(object.get("simplification"));
+    options.dash_offset = f64_option(object.get("dashOffset"));
+    options.dash_gap = f64_option(object.get("dashGap"));
+    options.zigzag_offset = f64_option(object.get("zigzagOffset"));
+    options.seed = object.get("seed").and_then(Value::as_u64);
+    options.stroke_line_dash = f64_vec_option(object.get("strokeLineDash"));
+    options.stroke_line_dash_offset = f64_option(object.get("strokeLineDashOffset"));
+    options.fill_line_dash = f64_vec_option(object.get("fillLineDash"));
+    options.fill_line_dash_offset = f64_option(object.get("fillLineDashOffset"));
+    options.disable_multi_stroke = bool_option(object.get("disableMultiStroke"));
+    options.disable_multi_stroke_fill = bool_option(object.get("disableMultiStrokeFill"));
+    options.preserve_vertices = bool_option(object.get("preserveVertices"));
+    options.fixed_decimal_place_digits = object
+        .get("fixedDecimalPlaceDigits")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok());
+    options.fill_shape_roughness_gain = f64_option(object.get("fillShapeRoughnessGain"));
+
+    Some(options)
+}
+
+fn f64_option(value: Option<&Value>) -> Option<f64> {
+    value.and_then(Value::as_f64)
+}
+
+fn string_option(value: Option<&Value>) -> Option<String> {
+    value.and_then(Value::as_str).map(ToString::to_string)
+}
+
+fn bool_option(value: Option<&Value>) -> Option<bool> {
+    value.and_then(Value::as_bool)
+}
+
+fn f64_vec_option(value: Option<&Value>) -> Option<Vec<f64>> {
+    value?
+        .as_array()?
+        .iter()
+        .map(Value::as_f64)
+        .collect::<Option<Vec<_>>>()
 }
 
 fn expected_set_type(value: &str) -> Result<OpSetType, io::Error> {

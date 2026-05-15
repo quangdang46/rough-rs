@@ -5,3 +5,7 @@
 # Added by cargo
 
 /target
+
+# Vendored rough.js reference checkout: keep source/bundles, ignore local install metadata.
+/legacy/rough/.git/
+/legacy/rough/node_modules/

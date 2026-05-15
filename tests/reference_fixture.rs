@@ -21,6 +21,10 @@ fn reference_fixture_contains_required_parity_matrix() {
     let cases = parsed["cases"]
         .as_array()
         .expect("reference fixture should contain cases");
+    assert!(
+        cases.len() >= 37,
+        "reference fixture should cover the expanded parity matrix"
+    );
     let names = cases
         .iter()
         .map(|case| case["name"].as_str().expect("case should have a name"))
@@ -30,13 +34,33 @@ fn reference_fixture_contains_required_parity_matrix() {
         "line_seed_1",
         "rectangle_seed_42",
         "ellipse_seed_99",
+        "ellipse_solid_fill_seed_42",
+        "ellipse_hachure_fill_seed_42",
         "circle_seed_12345",
+        "circle_dots_fill_seed_42",
         "polygon_seed_42",
         "linear_path_seed_42",
         "arc_open_seed_42",
         "arc_closed_seed_42",
         "curve_seed_42",
         "svg_path_arc_seed_42",
+        "line_roughness_zero_seed_42",
+        "line_disable_multistroke_seed_42",
+        "line_preserve_vertices_seed_42",
+        "rectangle_stroke_none_solid_fill_seed_42",
+        "rectangle_fill_none_seed_42",
+        "rectangle_hachure_angle_zero_gap_seed_42",
+        "rectangle_custom_dash_fill_seed_42",
+        "rectangle_custom_zigzag_fill_seed_42",
+        "ellipse_negative_dimensions_seed_42",
+        "ellipse_tiny_seed_42",
+        "polygon_concave_hachure_seed_42",
+        "arc_closed_hachure_seed_42",
+        "curve_three_points_seed_42",
+        "curve_repeated_points_seed_42",
+        "svg_path_relative_commands_seed_42",
+        "svg_path_simplification_seed_42",
+        "rectangle_seed_zero_structure",
         "rectangle_fill_hachure",
         "rectangle_fill_solid",
         "rectangle_fill_zigzag",

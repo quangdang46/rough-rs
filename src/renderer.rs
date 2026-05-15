@@ -1,6 +1,6 @@
 use crate::core::{FillStyle, Op, OpSet, OpSetType, OpType, ResolvedOptions};
 use crate::geometry::Point;
-use crate::math::RngHelper;
+use crate::math::{random_unit, RngHelper};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -536,8 +536,8 @@ pub fn dots_fill_polygon(
         let min_y = line[0][1].min(line[1][1]);
         for i in 0..count {
             let y = min_y + offset + (i as f64 * gap);
-            let cx = x + rng.offset_symmetric(random_offset, 1.0, 1.0);
-            let cy = y + rng.offset_symmetric(random_offset, 1.0, 1.0);
+            let cx = (x - random_offset) + random_unit() * 2.0 * random_offset;
+            let cy = (y - random_offset) + random_unit() * 2.0 * random_offset;
             let params = generate_ellipse_params(fill_weight, fill_weight, &dot_options, rng);
             ops.extend(
                 ellipse_with_params(cx, cy, &dot_options, params, rng)

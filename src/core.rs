@@ -4,11 +4,14 @@ use std::str::FromStr;
 
 pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
+/// Global generator configuration.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
+    /// Default options merged into every generated shape.
     pub options: Option<Options>,
 }
 
+/// Per-shape rough.js-style rendering options.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     pub max_randomness_offset: Option<f64>,
@@ -40,6 +43,7 @@ pub struct Options {
     pub fill_shape_roughness_gain: Option<f64>,
 }
 
+/// Fully resolved options after rough.js defaults and per-call overrides.
 #[derive(Debug, Clone)]
 pub struct ResolvedOptions {
     pub max_randomness_offset: f64,
@@ -236,6 +240,7 @@ impl ResolvedOptions {
     }
 }
 
+/// rough.js fill style.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FillStyle {
     #[default]
@@ -300,6 +305,7 @@ impl FromStr for FillStyle {
     }
 }
 
+/// Low-level drawing operation type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpType {
     Move,
@@ -307,6 +313,7 @@ pub enum OpType {
     LineTo,
 }
 
+/// Low-level drawing operation and its numeric payload.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Op {
     pub op: OpType,
@@ -322,6 +329,7 @@ impl Op {
     }
 }
 
+/// Grouping for operations with shared SVG styling semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpSetType {
     Path,
@@ -329,6 +337,7 @@ pub enum OpSetType {
     FillSketch,
 }
 
+/// A path/fill operation set produced by the renderer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpSet {
     pub set_type: OpSetType,
@@ -348,6 +357,7 @@ impl OpSet {
     }
 }
 
+/// Public rough.js shape type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShapeType {
     Line,
@@ -383,19 +393,29 @@ impl fmt::Display for ShapeType {
     }
 }
 
+/// A generated rough.js-style shape before SVG path serialization.
 #[derive(Debug, Clone)]
 pub struct Drawable {
+    /// Shape kind requested from the generator.
     pub shape: ShapeType,
+    /// Resolved options used to generate this drawable.
     pub options: ResolvedOptions,
+    /// Operation sets in SVG rendering order.
     pub sets: Vec<OpSet>,
 }
 
+/// Serializable SVG path attributes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvgPath {
+    /// SVG path data.
     pub d: String,
+    /// Stroke color or `none`.
     pub stroke: String,
+    /// Stroke width in SVG units.
     pub stroke_width: f64,
+    /// Fill color or `none`.
     pub fill: String,
 }
 
+/// Alias matching rough.js naming in generator output.
 pub type PathInfo = SvgPath;

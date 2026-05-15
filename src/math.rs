@@ -43,7 +43,7 @@ pub fn random_seed() -> u64 {
     }
 }
 
-fn random_unit() -> f64 {
+pub(crate) fn random_unit() -> f64 {
     #[cfg(feature = "rand")]
     {
         use rand::Rng;

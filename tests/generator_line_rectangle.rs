@@ -205,6 +205,28 @@ fn generator_rectangle_advanced_fill_styles_match_legacy_fixture_counts(
     Ok(())
 }
 
+#[cfg(feature = "rand")]
+#[test]
+fn dot_fill_centers_follow_roughjs_unseeded_randomness() {
+    let generator = Generator::new(Config::default());
+    let options = Options {
+        seed: Some(777),
+        fill: Some("red".to_string()),
+        fill_style: Some(FillStyle::Dots),
+        ..Options::default()
+    };
+
+    let first = generator.rectangle(10.0, 10.0, 120.0, 80.0, Some(options.clone()));
+    let second = generator.rectangle(10.0, 10.0, 120.0, 80.0, Some(options));
+
+    assert_eq!(first.sets[0].set_type, OpSetType::FillSketch);
+    assert_eq!(first.sets[0].ops.len(), second.sets[0].ops.len());
+    assert_ne!(
+        first.sets[0].ops, second.sets[0].ops,
+        "rough.js DotFiller uses Math.random for dot centers, so exact dot coordinates are not seeded"
+    );
+}
+
 #[test]
 fn advanced_fill_styles_handle_large_polygons_without_runaway_output() {
     let generator = Generator::new(Config::default());
