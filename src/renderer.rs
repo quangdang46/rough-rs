@@ -18,6 +18,19 @@ impl fmt::Display for CurveError {
 
 impl std::error::Error for CurveError {}
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EllipseParams {
+    pub rx: f64,
+    pub ry: f64,
+    pub increment: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EllipseResult {
+    pub opset: OpSet,
+    pub estimated_points: Vec<Point>,
+}
+
 pub fn line(x1: f64, y1: f64, x2: f64, y2: f64, options: &ResolvedOptions) -> OpSet {
     let mut rng = RngHelper::new(options.seed);
     OpSet::new(
@@ -73,6 +86,77 @@ pub fn rectangle(x: f64, y: f64, width: f64, height: f64, options: &ResolvedOpti
         [x, y + height],
     ];
     polygon(&points, options)
+}
+
+pub fn ellipse(x: f64, y: f64, width: f64, height: f64, options: &ResolvedOptions) -> OpSet {
+    let mut rng = RngHelper::new(options.seed);
+    let params = generate_ellipse_params(width, height, options, &mut rng);
+    ellipse_with_params(x, y, options, params, &mut rng).opset
+}
+
+pub fn generate_ellipse_params(
+    width: f64,
+    height: f64,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> EllipseParams {
+    let psq = (std::f64::consts::PI
+        * 2.0
+        * (((width / 2.0).powi(2) + (height / 2.0).powi(2)) / 2.0).sqrt())
+    .sqrt();
+    let step_count = options
+        .curve_step_count
+        .max((options.curve_step_count / 200.0_f64.sqrt()) * psq)
+        .ceil();
+    let increment = (std::f64::consts::PI * 2.0) / step_count;
+    let curve_fit_randomness = 1.0 - options.curve_fitting;
+    let mut rx = (width / 2.0).abs();
+    let mut ry = (height / 2.0).abs();
+    rx += rng.offset_symmetric(rx * curve_fit_randomness, options.roughness, 1.0);
+    ry += rng.offset_symmetric(ry * curve_fit_randomness, options.roughness, 1.0);
+    EllipseParams { rx, ry, increment }
+}
+
+pub fn ellipse_with_params(
+    x: f64,
+    y: f64,
+    options: &ResolvedOptions,
+    ellipse_params: EllipseParams,
+    rng: &mut RngHelper,
+) -> EllipseResult {
+    let nested_max = rng.offset(0.4, 1.0, options.roughness, 1.0);
+    let overlap = ellipse_params.increment * rng.offset(0.1, nested_max, options.roughness, 1.0);
+    let (ap1, cp1) = compute_ellipse_points(
+        ellipse_params.increment,
+        x,
+        y,
+        ellipse_params.rx,
+        ellipse_params.ry,
+        1.0,
+        overlap,
+        options,
+        rng,
+    );
+    let mut ops = curve_ops(&ap1, None, options, rng);
+    if !options.disable_multi_stroke && options.roughness != 0.0 {
+        let (ap2, _) = compute_ellipse_points(
+            ellipse_params.increment,
+            x,
+            y,
+            ellipse_params.rx,
+            ellipse_params.ry,
+            1.5,
+            0.0,
+            options,
+            rng,
+        );
+        ops.extend(curve_ops(&ap2, None, options, rng));
+    }
+
+    EllipseResult {
+        estimated_points: cp1,
+        opset: OpSet::new(OpSetType::Path, ops),
+    }
 }
 
 pub fn double_line_ops(
@@ -255,6 +339,141 @@ fn line_ops(
     ));
 
     ops
+}
+
+fn curve_ops(
+    points: &[Point],
+    close_point: Option<Point>,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> Vec<Op> {
+    let len = points.len();
+    let mut ops = Vec::new();
+    if len > 3 {
+        let s = 1.0 - options.curve_tightness;
+        ops.push(Op::new(OpType::Move, vec![points[1][0], points[1][1]]));
+        for i in 1..len - 2 {
+            let current = points[i];
+            let b1 = [
+                current[0] + (s * points[i + 1][0] - s * points[i - 1][0]) / 6.0,
+                current[1] + (s * points[i + 1][1] - s * points[i - 1][1]) / 6.0,
+            ];
+            let b2 = [
+                points[i + 1][0] + (s * points[i][0] - s * points[i + 2][0]) / 6.0,
+                points[i + 1][1] + (s * points[i][1] - s * points[i + 2][1]) / 6.0,
+            ];
+            let b3 = points[i + 1];
+            ops.push(Op::new(
+                OpType::BCurveTo,
+                vec![b1[0], b1[1], b2[0], b2[1], b3[0], b3[1]],
+            ));
+        }
+        if let Some(close_point) = close_point {
+            let ro = options.max_randomness_offset;
+            ops.push(Op::new(
+                OpType::LineTo,
+                vec![
+                    close_point[0] + rng.offset_symmetric(ro, options.roughness, 1.0),
+                    close_point[1] + rng.offset_symmetric(ro, options.roughness, 1.0),
+                ],
+            ));
+        }
+    } else if len == 3 {
+        ops.push(Op::new(OpType::Move, vec![points[1][0], points[1][1]]));
+        ops.push(Op::new(
+            OpType::BCurveTo,
+            vec![
+                points[1][0],
+                points[1][1],
+                points[2][0],
+                points[2][1],
+                points[2][0],
+                points[2][1],
+            ],
+        ));
+    } else if len == 2 {
+        ops.extend(line_ops(points[0], points[1], options, rng, true, true));
+    }
+    ops
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_ellipse_points(
+    mut increment: f64,
+    cx: f64,
+    cy: f64,
+    rx: f64,
+    ry: f64,
+    offset: f64,
+    overlap: f64,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> (Vec<Point>, Vec<Point>) {
+    let core_only = options.roughness == 0.0;
+    let mut core_points = Vec::new();
+    let mut all_points = Vec::new();
+
+    if core_only {
+        increment /= 4.0;
+        all_points.push([cx + rx * (-increment).cos(), cy + ry * (-increment).sin()]);
+        let mut angle = 0.0;
+        while angle <= std::f64::consts::PI * 2.0 {
+            let point = [cx + rx * angle.cos(), cy + ry * angle.sin()];
+            core_points.push(point);
+            all_points.push(point);
+            angle += increment;
+        }
+        all_points.push([cx + rx, cy]);
+        all_points.push([cx + rx * increment.cos(), cy + ry * increment.sin()]);
+    } else {
+        let rad_offset =
+            rng.offset_symmetric(0.5, options.roughness, 1.0) - std::f64::consts::FRAC_PI_2;
+        all_points.push([
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cx
+                + 0.9 * rx * (rad_offset - increment).cos(),
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cy
+                + 0.9 * ry * (rad_offset - increment).sin(),
+        ]);
+        let end_angle = std::f64::consts::PI * 2.0 + rad_offset - 0.01;
+        let mut angle = rad_offset;
+        while angle < end_angle {
+            let point = [
+                rng.offset_symmetric(offset, options.roughness, 1.0) + cx + rx * angle.cos(),
+                rng.offset_symmetric(offset, options.roughness, 1.0) + cy + ry * angle.sin(),
+            ];
+            core_points.push(point);
+            all_points.push(point);
+            angle += increment;
+        }
+        all_points.push([
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cx
+                + rx * (rad_offset + std::f64::consts::PI * 2.0 + overlap * 0.5).cos(),
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cy
+                + ry * (rad_offset + std::f64::consts::PI * 2.0 + overlap * 0.5).sin(),
+        ]);
+        all_points.push([
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cx
+                + 0.98 * rx * (rad_offset + overlap).cos(),
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cy
+                + 0.98 * ry * (rad_offset + overlap).sin(),
+        ]);
+        all_points.push([
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cx
+                + 0.9 * rx * (rad_offset + overlap * 0.5).cos(),
+            rng.offset_symmetric(offset, options.roughness, 1.0)
+                + cy
+                + 0.9 * ry * (rad_offset + overlap * 0.5).sin(),
+        ]);
+    }
+
+    (all_points, core_points)
 }
 
 fn distance(p1: Point, p2: Point) -> f64 {
@@ -486,6 +705,53 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn seeded_ellipse_matches_legacy_fixture_ops() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/reference.json")).unwrap();
+        let case = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == "ellipse_seed_99")
+            .expect("ellipse fixture should exist");
+        let expected_ops = case["drawable"]["sets"][0]["ops"].as_array().unwrap();
+        let options = ResolvedOptions::from_options(&Options {
+            seed: Some(99),
+            ..Options::default()
+        });
+
+        let actual = ellipse(100.0, 100.0, 200.0, 150.0, &options);
+
+        assert_eq!(actual.ops.len(), expected_ops.len());
+        for (actual, expected) in actual.ops.iter().zip(expected_ops) {
+            assert_eq!(op_name(actual.op), expected["op"].as_str().unwrap());
+            let expected_data = expected["data"].as_array().unwrap();
+            assert_eq!(actual.data.len(), expected_data.len());
+            for (actual_value, expected_value) in actual.data.iter().zip(expected_data) {
+                assert_relative_eq!(
+                    *actual_value,
+                    expected_value.as_f64().unwrap(),
+                    epsilon = 1e-10
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ellipse_params_scale_step_count_with_size() {
+        let options = ResolvedOptions::from_options(&Options {
+            seed: Some(42),
+            ..Options::default()
+        });
+        let mut small_rng = RngHelper::new(options.seed);
+        let mut large_rng = RngHelper::new(options.seed);
+        let small = generate_ellipse_params(20.0, 20.0, &options, &mut small_rng);
+        let large = generate_ellipse_params(400.0, 300.0, &options, &mut large_rng);
+
+        assert!(large.increment < small.increment);
     }
 
     #[test]

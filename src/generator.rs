@@ -65,6 +65,29 @@ impl Generator {
         self.drawable(ShapeType::Rectangle, sets, resolved)
     }
 
+    pub fn ellipse(
+        &self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        options: Option<Options>,
+    ) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        let mut sets = Vec::new();
+        let outline = renderer::ellipse(x, y, width, height, &resolved);
+        if resolved.stroke != "none" {
+            sets.push(outline);
+        }
+        self.drawable(ShapeType::Ellipse, sets, resolved)
+    }
+
+    pub fn circle(&self, x: f64, y: f64, diameter: f64, options: Option<Options>) -> Drawable {
+        let mut drawable = self.ellipse(x, y, diameter, diameter, options);
+        drawable.shape = ShapeType::Circle;
+        drawable
+    }
+
     fn drawable(&self, shape: ShapeType, sets: Vec<OpSet>, options: ResolvedOptions) -> Drawable {
         Drawable {
             shape,
