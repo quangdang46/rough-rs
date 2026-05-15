@@ -115,6 +115,127 @@ pub fn ellipse(x: f64, y: f64, width: f64, height: f64, options: &ResolvedOption
     ellipse_with_params(x, y, options, params, &mut rng).opset
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn arc(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    start: f64,
+    stop: f64,
+    closed: bool,
+    rough_closure: bool,
+    options: &ResolvedOptions,
+) -> OpSet {
+    let mut rng = RngHelper::new(options.seed);
+    arc_with_rng(
+        x,
+        y,
+        width,
+        height,
+        start,
+        stop,
+        closed,
+        rough_closure,
+        options,
+        &mut rng,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn arc_with_rng(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    start: f64,
+    stop: f64,
+    closed: bool,
+    rough_closure: bool,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let cx = x;
+    let cy = y;
+    let mut rx = (width / 2.0).abs();
+    let mut ry = (height / 2.0).abs();
+    rx += rng.offset_symmetric(rx * 0.01, options.roughness, 1.0);
+    ry += rng.offset_symmetric(ry * 0.01, options.roughness, 1.0);
+    let mut strt = start;
+    let mut stp = stop;
+    while strt < 0.0 {
+        strt += std::f64::consts::PI * 2.0;
+        stp += std::f64::consts::PI * 2.0;
+    }
+    if stp - strt > std::f64::consts::PI * 2.0 {
+        strt = 0.0;
+        stp = std::f64::consts::PI * 2.0;
+    }
+    let ellipse_inc = (std::f64::consts::PI * 2.0) / options.curve_step_count;
+    let arc_inc = (ellipse_inc / 2.0).min((stp - strt) / 2.0);
+    let mut ops = arc_ops(arc_inc, cx, cy, rx, ry, strt, stp, 1.0, options, rng);
+    if !options.disable_multi_stroke {
+        ops.extend(arc_ops(
+            arc_inc, cx, cy, rx, ry, strt, stp, 1.5, options, rng,
+        ));
+    }
+    if closed {
+        if rough_closure {
+            ops.extend(double_line_ops(
+                cx,
+                cy,
+                cx + rx * strt.cos(),
+                cy + ry * strt.sin(),
+                options,
+                rng,
+                false,
+            ));
+            ops.extend(double_line_ops(
+                cx,
+                cy,
+                cx + rx * stp.cos(),
+                cy + ry * stp.sin(),
+                options,
+                rng,
+                false,
+            ));
+        } else {
+            ops.push(Op::new(OpType::LineTo, vec![cx, cy]));
+            ops.push(Op::new(
+                OpType::LineTo,
+                vec![cx + rx * strt.cos(), cy + ry * strt.sin()],
+            ));
+        }
+    }
+    OpSet::new(OpSetType::Path, ops)
+}
+
+pub fn curve(points: &[Point], options: &ResolvedOptions) -> OpSet {
+    let mut rng = RngHelper::new(options.seed);
+    curve_with_rng(points, options, &mut rng)
+}
+
+pub fn curve_with_rng(points: &[Point], options: &ResolvedOptions, rng: &mut RngHelper) -> OpSet {
+    if points.is_empty() {
+        return empty_path(options);
+    }
+    let mut ops = curve_with_offset(points, 1.0 * (1.0 + options.roughness * 0.2), options, rng);
+    if !options.disable_multi_stroke {
+        let mut overlay_rng = RngHelper::new(if options.seed != 0 {
+            options.seed + 1
+        } else {
+            0
+        });
+        ops.extend(curve_with_offset(
+            points,
+            1.5 * (1.0 + options.roughness * 0.22),
+            options,
+            &mut overlay_rng,
+        ));
+    }
+    OpSet::new(OpSetType::Path, ops)
+}
+
 pub fn generate_ellipse_params(
     width: f64,
     height: f64,
@@ -219,6 +340,45 @@ pub fn pattern_fill_polygons(
         FillStyle::Solid => solid_fill_polygon(polygon_list, options, rng),
         _ => hachure_fill_polygon(polygon_list, options, rng),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn pattern_fill_arc(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    start: f64,
+    stop: f64,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> OpSet {
+    let cx = x;
+    let cy = y;
+    let mut rx = (width / 2.0).abs();
+    let mut ry = (height / 2.0).abs();
+    rx += rng.offset_symmetric(rx * 0.01, options.roughness, 1.0);
+    ry += rng.offset_symmetric(ry * 0.01, options.roughness, 1.0);
+    let mut strt = start;
+    let mut stp = stop;
+    while strt < 0.0 {
+        strt += std::f64::consts::PI * 2.0;
+        stp += std::f64::consts::PI * 2.0;
+    }
+    if stp - strt > std::f64::consts::PI * 2.0 {
+        strt = 0.0;
+        stp = std::f64::consts::PI * 2.0;
+    }
+    let increment = (stp - strt) / options.curve_step_count;
+    let mut points = Vec::new();
+    let mut angle = strt;
+    while angle <= stp {
+        points.push([cx + rx * angle.cos(), cy + ry * angle.sin()]);
+        angle += increment;
+    }
+    points.push([cx + rx * stp.cos(), cy + ry * stp.sin()]);
+    points.push([cx, cy]);
+    pattern_fill_polygons(&[points], options, rng)
 }
 
 pub fn hachure_fill_polygon(
@@ -490,6 +650,75 @@ fn curve_ops(
         ops.extend(line_ops(points[0], points[1], options, rng, true, true));
     }
     ops
+}
+
+#[allow(clippy::too_many_arguments)]
+fn arc_ops(
+    increment: f64,
+    cx: f64,
+    cy: f64,
+    rx: f64,
+    ry: f64,
+    strt: f64,
+    stp: f64,
+    offset: f64,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> Vec<Op> {
+    let rad_offset = strt + rng.offset_symmetric(0.1, options.roughness, 1.0);
+    let mut points = Vec::new();
+    points.push([
+        rng.offset_symmetric(offset, options.roughness, 1.0)
+            + cx
+            + 0.9 * rx * (rad_offset - increment).cos(),
+        rng.offset_symmetric(offset, options.roughness, 1.0)
+            + cy
+            + 0.9 * ry * (rad_offset - increment).sin(),
+    ]);
+    let mut angle = rad_offset;
+    while angle <= stp {
+        points.push([
+            rng.offset_symmetric(offset, options.roughness, 1.0) + cx + rx * angle.cos(),
+            rng.offset_symmetric(offset, options.roughness, 1.0) + cy + ry * angle.sin(),
+        ]);
+        angle += increment;
+    }
+    points.push([cx + rx * stp.cos(), cy + ry * stp.sin()]);
+    points.push([cx + rx * stp.cos(), cy + ry * stp.sin()]);
+    curve_ops(&points, None, options, rng)
+}
+
+fn curve_with_offset(
+    points: &[Point],
+    offset: f64,
+    options: &ResolvedOptions,
+    rng: &mut RngHelper,
+) -> Vec<Op> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+    let mut ps = Vec::with_capacity(points.len() + 2);
+    ps.push([
+        points[0][0] + rng.offset_symmetric(offset, options.roughness, 1.0),
+        points[0][1] + rng.offset_symmetric(offset, options.roughness, 1.0),
+    ]);
+    ps.push([
+        points[0][0] + rng.offset_symmetric(offset, options.roughness, 1.0),
+        points[0][1] + rng.offset_symmetric(offset, options.roughness, 1.0),
+    ]);
+    for (index, point) in points.iter().enumerate().skip(1) {
+        ps.push([
+            point[0] + rng.offset_symmetric(offset, options.roughness, 1.0),
+            point[1] + rng.offset_symmetric(offset, options.roughness, 1.0),
+        ]);
+        if index == points.len() - 1 {
+            ps.push([
+                point[0] + rng.offset_symmetric(offset, options.roughness, 1.0),
+                point[1] + rng.offset_symmetric(offset, options.roughness, 1.0),
+            ]);
+        }
+    }
+    curve_ops(&ps, None, options, rng)
 }
 
 #[allow(clippy::too_many_arguments)]

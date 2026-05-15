@@ -1,6 +1,6 @@
 use crate::core::{Config, Drawable, OpSet, Options, ResolvedOptions, ShapeType};
-use crate::math::random_seed;
-use crate::math::RngHelper;
+use crate::geometry::Point;
+use crate::math::{random_seed, RngHelper};
 use crate::renderer;
 
 #[derive(Debug, Clone)]
@@ -103,6 +103,129 @@ impl Generator {
         drawable
     }
 
+    pub fn linear_path(&self, points: &[Point], options: Option<Options>) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        self.drawable(
+            ShapeType::LinearPath,
+            vec![renderer::linear_path(points, false, &resolved)],
+            resolved,
+        )
+    }
+
+    pub fn polygon(&self, points: &[Point], options: Option<Options>) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        let mut rng = RngHelper::new(resolved.seed);
+        let outline = renderer::linear_path_with_rng(points, true, &resolved, &mut rng);
+        let mut sets = Vec::new();
+        if resolved.fill.is_some() {
+            sets.push(renderer::pattern_fill_polygons(
+                &[points.to_vec()],
+                &resolved,
+                &mut rng,
+            ));
+        }
+        if resolved.stroke != "none" {
+            sets.push(outline);
+        }
+        self.drawable(ShapeType::Polygon, sets, resolved)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn arc(
+        &self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        start: f64,
+        stop: f64,
+        closed: bool,
+        options: Option<Options>,
+    ) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        let mut rng = RngHelper::new(resolved.seed);
+        let outline = renderer::arc_with_rng(
+            x, y, width, height, start, stop, closed, true, &resolved, &mut rng,
+        );
+        let mut sets = Vec::new();
+        if closed && resolved.fill.is_some() {
+            if resolved.fill_style == crate::core::FillStyle::Solid {
+                let mut fill_options = resolved.clone();
+                fill_options.disable_multi_stroke = true;
+                let mut shape = renderer::arc_with_rng(
+                    x,
+                    y,
+                    width,
+                    height,
+                    start,
+                    stop,
+                    true,
+                    false,
+                    &fill_options,
+                    &mut rng,
+                );
+                shape.set_type = crate::core::OpSetType::FillPath;
+                sets.push(shape);
+            } else {
+                sets.push(renderer::pattern_fill_arc(
+                    x, y, width, height, start, stop, &resolved, &mut rng,
+                ));
+            }
+        }
+        if resolved.stroke != "none" {
+            sets.push(outline);
+        }
+        self.drawable(ShapeType::Arc, sets, resolved)
+    }
+
+    pub fn curve(&self, points: &[Point], options: Option<Options>) -> Drawable {
+        let resolved = self.resolve_options(options.as_ref());
+        let mut rng = RngHelper::new(resolved.seed);
+        let outline = renderer::curve_with_rng(points, &resolved, &mut rng);
+        let mut sets = Vec::new();
+        if resolved.fill.as_deref().is_some_and(|fill| fill != "none") {
+            if resolved.fill_style == crate::core::FillStyle::Solid {
+                let mut fill_options = resolved.clone();
+                fill_options.disable_multi_stroke = true;
+                fill_options.roughness = if resolved.roughness != 0.0 {
+                    resolved.roughness + resolved.fill_shape_roughness_gain
+                } else {
+                    0.0
+                };
+                let fill_shape = renderer::curve_with_rng(points, &fill_options, &mut rng);
+                let ops = fill_shape
+                    .ops
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, op)| {
+                        if index == 0 || op.op != crate::core::OpType::Move {
+                            Some(op)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                sets.push(crate::core::OpSet::new(
+                    crate::core::OpSetType::FillPath,
+                    ops,
+                ));
+            } else {
+                let poly_points = curve_fill_points(points, &resolved);
+                if !poly_points.is_empty() {
+                    sets.push(renderer::pattern_fill_polygons(
+                        &[poly_points],
+                        &resolved,
+                        &mut rng,
+                    ));
+                }
+            }
+        }
+        if resolved.stroke != "none" {
+            sets.push(outline);
+        }
+        self.drawable(ShapeType::Curve, sets, resolved)
+    }
+
     fn drawable(&self, shape: ShapeType, sets: Vec<OpSet>, options: ResolvedOptions) -> Drawable {
         Drawable {
             shape,
@@ -110,6 +233,22 @@ impl Generator {
             sets,
         }
     }
+}
+
+fn curve_fill_points(points: &[Point], options: &ResolvedOptions) -> Vec<Point> {
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+    let bezier_input = if points.len() == 3 {
+        vec![points[0], points[0], points[1], points[2]]
+    } else {
+        points.to_vec()
+    };
+    renderer::curve_to_bezier(&bezier_input, options.curve_tightness)
+        .map(|bezier| {
+            renderer::points_on_bezier_curves(&bezier, 10.0, Some((1.0 + options.roughness) / 2.0))
+        })
+        .unwrap_or_default()
 }
 
 impl Default for Generator {
