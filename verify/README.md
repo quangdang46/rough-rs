@@ -1,8 +1,9 @@
 # Reference Fixtures
 
-`generate_reference.mjs` records rough.js 4.6.6 behavior from the vendored
-`legacy/rough` source tree. The generated JSON is the executable reference for
-RNG parity, operation structure, SVG path strings, primitives, and fill styles.
+`generate_reference.mjs` records rough.js 4.6.6 behavior from a local upstream
+rough.js checkout at `legacy/rough`. The generated JSON is the executable
+reference for RNG parity, operation structure, SVG path strings, primitives,
+and fill styles.
 The matrix intentionally includes every supported generator method, all fill
 styles, representative option interactions, SVG path command families, seed=0
 structural coverage, and edge cases such as tiny or negative dimensions.
@@ -14,6 +15,7 @@ runtime behavior is intentionally nondeterministic.
 Regenerate fixtures from the repository root:
 
 ```bash
+git clone https://github.com/rough-stuff/rough.git legacy/rough
 cd legacy/rough
 npm ci
 npm run build

@@ -3,9 +3,12 @@
 Pure Rust rough.js 4.6.6-compatible sketchy SVG path generation.
 
 rough-rs ports the supported rough.js 4.6.6 generator surface to Rust and
-checks it against the vendored `legacy/rough` source tree. It generates SVG path
-data without requiring a browser, Canvas, Node.js, or WASM at runtime. The crate
-is intended as a rendering foundation for Excalidraw-style Rust tools.
+checks it against reference fixtures generated from the upstream rough.js
+project. It generates SVG path data without requiring a browser, Canvas,
+Node.js, or WASM at runtime. The crate is intended as a rendering foundation for
+Excalidraw-style Rust tools.
+
+![rough-rs complex SVG showcase](docs/assets/rough-complex.svg)
 
 ## Install
 
@@ -71,8 +74,8 @@ Compatibility summary:
 
 | Area | Status |
 | --- | --- |
-| Generator primitives | Supported and fixture-tested against `legacy/rough`. |
-| Fill styles | Supported and fixture-tested against `legacy/rough`. |
+| Generator primitives | Supported and fixture-tested against rough.js 4.6.6 reference output. |
+| Fill styles | Supported and fixture-tested against rough.js 4.6.6 reference output. |
 | Seeded RNG | Matches rough.js nonzero seed generator. |
 | Dot fills | Follow rough.js `Math.random()` dot-center behavior, so exact dot coordinates are nondeterministic. |
 | SVG path parsing | Supported behind the default `svg_path` feature. |
@@ -98,11 +101,12 @@ Both features are enabled by default.
 
 ## Reference Fixtures
 
-Fixtures are generated from the vendored rough.js source in `legacy/rough`.
-The `legacy/rough` tree is kept in the repository for development parity work,
-but it is intentionally excluded from the crates.io package:
+Fixtures are generated from a local rough.js checkout at `legacy/rough`. That
+checkout is intentionally not committed and is excluded from the crates.io
+package:
 
 ```bash
+git clone https://github.com/rough-stuff/rough.git legacy/rough
 cd legacy/rough
 npm ci
 npm run build

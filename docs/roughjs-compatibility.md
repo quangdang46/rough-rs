@@ -1,8 +1,8 @@
 # rough.js compatibility matrix
 
-rough-rs targets the pure generator and SVG path-output behavior of the vendored
-`legacy/rough` rough.js 4.6.6 source tree. The executable reference is generated
-by `verify/generate_reference.mjs` and checked by
+rough-rs targets the pure generator and SVG path-output behavior of rough.js
+4.6.6. The executable reference is generated from a local upstream rough.js
+checkout by `verify/generate_reference.mjs` and checked by
 `cargo test --test comprehensive_parity`.
 
 ## Supported 1:1 surface
@@ -12,7 +12,7 @@ by `verify/generate_reference.mjs` and checked by
 | Generator methods | `line`, `rectangle`, `ellipse`, `circle`, `linearPath`, `polygon`, `arc`, `curve`, `path` | Supported with Rust snake-case where appropriate (`linear_path`) | `tests/comprehensive_parity.rs` renders fixture cases by method from JSON |
 | Shape names | `line`, `rectangle`, `ellipse`, `circle`, `linearPath`, `arc`, `curve`, `polygon`, `path` | Matched through `ShapeType::as_rough_str` | `tests/options.rs` |
 | Op model | `move`, `lineTo`, `bcurveTo` inside `path`, `fillPath`, `fillSketch` sets | Matched as `OpType` and `OpSetType` | `tests/comprehensive_parity.rs` |
-| Default options | rough.js generator defaults from `legacy/rough/src/generator.ts` | Matched in `ResolvedOptions::default` | `tests/options.rs` |
+| Default options | rough.js generator defaults from `src/generator.ts` in the upstream reference checkout | Matched in `ResolvedOptions::default` | `tests/options.rs` |
 | Option merge | Config defaults plus per-call overrides | Matched through `Generator::resolve_options` | `tests/options.rs` |
 | Seeded RNG | rough.js 48271 generator for nonzero seeds, with rough.js dot-fill coordinates intentionally using `Math.random()` | Matched numerically for seeded cases; dot-fill coordinates are nondeterministic like rough.js | `tests/fixtures/reference.json`, `src/math.rs` tests |
 | SVG serialization | `opsToPath` and `toPaths` path/fill/fillSketch mapping | Matched structurally and numerically; string formatting is not required byte-for-byte | `tests/comprehensive_parity.rs`, `src/svg.rs` tests |

@@ -14,7 +14,8 @@ const outputPath = process.argv[2]
 
 if (!fs.existsSync(roughBundle)) {
   console.error(`Missing ${path.relative(repoRoot, roughBundle)}.`);
-  console.error("Build the legacy reference first:");
+  console.error("Clone and build the rough.js reference first:");
+  console.error("  git clone https://github.com/rough-stuff/rough.git legacy/rough");
   console.error("  cd legacy/rough && npm ci && npm run build");
   process.exit(1);
 }
