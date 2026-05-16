@@ -40,10 +40,12 @@ fn main() {
         }),
     );
 
+    println!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 180">"#);
     for path in drawable_to_paths(&drawable) {
         println!(
             r#"<path d="{}" stroke="{}" stroke-width="{}" fill="{}"/>"#,
             path.d, path.stroke, path.stroke_width, path.fill
         );
     }
+    println!("</svg>");
 }
