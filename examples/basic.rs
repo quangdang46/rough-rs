@@ -5,20 +5,9 @@ use std::fmt::Write;
 fn main() {
     let generator = Generator::new(Config::default());
     let shapes = [
-        generator.line(
-            10.0,
-            20.0,
-            180.0,
-            40.0,
-            Some(Options {
-                seed: Some(1),
-                stroke: Some("#1f2937".to_string()),
-                ..Options::default()
-            }),
-        ),
         generator.rectangle(
             20.0,
-            60.0,
+            45.0,
             120.0,
             80.0,
             Some(Options {
@@ -28,14 +17,15 @@ fn main() {
                 ..Options::default()
             }),
         ),
-        generator.ellipse(
+        generator.circle(
             210.0,
-            105.0,
-            90.0,
-            60.0,
+            85.0,
+            80.0,
             Some(Options {
                 seed: Some(3),
                 stroke: Some("#2563eb".to_string()),
+                fill: Some("#bfdbfe".to_string()),
+                fill_style: Some(FillStyle::Hachure),
                 ..Options::default()
             }),
         ),
