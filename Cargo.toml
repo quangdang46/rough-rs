@@ -8,6 +8,19 @@ repository = "https://github.com/quangdang46/rough-rs"
 readme = "README.md"
 keywords = ["roughjs", "svg", "graphics", "sketch", "excalidraw"]
 categories = ["graphics", "rendering"]
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "src/**",
+    "examples/**",
+    "benches/**",
+    "tests/**",
+    "docs/**",
+    "verify/**",
+]
 
 [dependencies]
 rand = { version = "0.8", optional = true, default-features = false, features = ["std", "std_rng"] }

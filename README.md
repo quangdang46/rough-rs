@@ -98,7 +98,9 @@ Both features are enabled by default.
 
 ## Reference Fixtures
 
-Fixtures are generated from the vendored rough.js source in `legacy/rough`:
+Fixtures are generated from the vendored rough.js source in `legacy/rough`.
+The `legacy/rough` tree is kept in the repository for development parity work,
+but it is intentionally excluded from the crates.io package:
 
 ```bash
 cd legacy/rough
@@ -119,6 +121,7 @@ cargo test --test comprehensive_parity
 ```bash
 cargo run --example basic
 cargo run --example excalidraw_element
+cargo run --example complex_showcase
 cargo bench
 ```
 
@@ -127,5 +130,5 @@ thresholds.
 
 ## Release Status
 
-v0.1 is release-candidate work until the final Beads quality gate is closed.
-Do not publish without explicit human approval.
+v0.1 has passed the local release quality gates. Publishing still requires an
+authenticated crates.io account and explicit human approval.
